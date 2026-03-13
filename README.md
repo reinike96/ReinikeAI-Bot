@@ -8,12 +8,16 @@
   ██   ██ ███████  ██  ██   ███  ██  ██  ██  ███████     ██   ██  ██
 ```
 
-Telegram-native PC orchestration for Windows, powered by PowerShell, OpenCode, and local automation skills.
+An open source Telegram extension for OpenCode on Windows, powered by PowerShell and local automation skills.
 
 ReinikeAI Bot turns Telegram into an operations console for your machine: run controlled local commands, delegate complex tasks to OpenCode, browse the web, generate files, return results to chat, and keep everything routed through a structured orchestration layer instead of ad-hoc scripts.
 
+It is designed as an OpenCode-powered alternative to OpenClawd: instead of replacing OpenCode, it extends it. The bot acts as a Telegram-facing orchestration layer that leverages OpenCode for coding, browsing, and multi-step execution while keeping local PowerShell automation, confirmations, file delivery, and runtime policy under your control.
+
 ## Why this project
 
+- Open source alternative to OpenClawd for Telegram-driven OpenCode workflows
+- Extension layer that leverages OpenCode instead of competing with it
 - Telegram-first control surface for real machine orchestration
 - OpenCode delegation for coding, browsing, and multi-step tasks
 - Local PowerShell skills for search, messaging, Outlook, and browser automation
@@ -23,6 +27,7 @@ ReinikeAI Bot turns Telegram into an operations console for your machine: run co
 ## Core Features
 
 - Telegram bot control for commands, files, screenshots, and follow-up actions
+- OpenCode-first delegation model for coding, browsing, and complex execution
 - OpenCode integration with capability routing, timeout policy, and background job handling
 - Native button flows for confirmations and user decisions
 - Local file delivery back to Telegram when reports, screenshots, or exports are generated
@@ -42,6 +47,13 @@ The bot is split into focused runtime modules:
 - [`runtime/CapabilitiesRegistry.ps1`](./runtime/CapabilitiesRegistry.ps1): OpenCode routing, risk, and default model policy
 - [`runtime/JobManager.ps1`](./runtime/JobManager.ps1): async job lifecycle and status tracking
 - [`runtime/TelegramApi.ps1`](./runtime/TelegramApi.ps1): Telegram send/edit/callback helpers
+
+In practice, the architecture is:
+
+- Telegram as the operator interface
+- ReinikeAI Bot as the orchestration and policy layer
+- OpenCode as the execution engine for complex tasks
+- Local PowerShell skills as direct orchestrator tools when delegation is not necessary
 
 ## Quick Start
 
@@ -95,6 +107,8 @@ Examples:
 
 OpenCode-side skills are separate from the local orchestrator registry and should only be treated as local skills if the orchestrator can execute them directly from this repository.
 
+This separation is intentional: orchestrator skills are local repo tools, while OpenCode skills belong to the OpenCode execution environment.
+
 ## Configuration
 
 Public-safe defaults live in:
@@ -131,4 +145,6 @@ Local machine configuration is created by the installer and should stay out of G
 
 ## License
 
-Add your preferred license before public distribution if you want explicit reuse terms.
+This project is open source and released under the MIT License.
+
+See [`LICENSE`](./LICENSE) for details.
