@@ -1,0 +1,34 @@
+{
+  "telegram": {
+    "botToken": "PASTE_YOUR_TELEGRAM_BOT_TOKEN",
+    "defaultChatId": "PASTE_YOUR_NUMERIC_CHAT_ID",
+    "startupChatId": "PASTE_YOUR_NUMERIC_CHAT_ID"
+  },
+  "llm": {
+    "openRouterApiKey": "PASTE_YOUR_OPENROUTER_API_KEY",
+    "primaryModel": "google/gemini-3.1-flash-lite-preview",
+    "secondaryModel": "qwen/qwen3.5-27b",
+    "reasoningEffort": "low",
+    "responseLanguage": "English"
+  },
+  "opencode": {
+    "apiKey": "PASTE_YOUR_OPENCODE_API_KEY",
+    "serverPassword": "SET_A_LOCAL_PASSWORD",
+    "host": "127.0.0.1",
+    "port": 4096,
+    "command": "opencode",
+    "configPath": "C:\\Users\\<YourUser>\\.config\\opencode\\config.json",
+    "defaultModel": "opencode/MiniMax-M2.5-free"
+  },
+  "browser": {
+    "chromeExecutable": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "chromeProfileDir": "C:\\Users\\<YourUser>\\AppData\\Local\\Google\\Chrome\\User Data\\Default",
+    "playwrightProfileDir": ".\\profiles\\playwright",
+    "locale": "en-US",
+    "timezone": "UTC"
+  },
+  "paths": {
+    "downloadsDir": ".\\archives",
+    "personalDataFile": ".\\PERSONAL DATA.md"
+  }
+}

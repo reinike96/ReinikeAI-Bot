@@ -1,0 +1,26 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "bash": "allow",
+    "read": "allow",
+    "write": "allow",
+    "fetch": "allow",
+    "skill": {
+      "*": "allow"
+    }
+  },
+  "agent": {
+    "build": {
+      "tools": {
+        "mcp-playwright": false,
+        "playwright_browser_*": true
+      }
+    },
+    "browse": {
+      "tools": {
+        "mcp-playwright": false,
+        "playwright_browser_*": true
+      }
+    }
+  }
+}

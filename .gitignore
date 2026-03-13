@@ -1,0 +1,14 @@
+config/settings.json
+config/opencode.local.json
+archives/*
+!archives/.gitkeep
+node_modules/
+crons/logs/
+*.log
+mem_*.json
+heartbeat_*.json
+jobs.json
+PERSONAL DATA.local.md
+profiles/
+!.gitkeep
+
