@@ -4,6 +4,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+trap {
+    Write-Host ""
+    Write-Host "[Setup] A fatal error occurred:" -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host ""
+    Write-Host "The installer stopped before completion." -ForegroundColor Yellow
+    Write-Host "Press Enter to close this window." -ForegroundColor Yellow
+    Read-Host | Out-Null
+    break
+}
+
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $configDir = Join-Path $projectRoot "config"
 $archivesDir = Join-Path $projectRoot "archives"
@@ -652,12 +663,26 @@ Ensure-Directory -Path (Split-Path -Parent $openCodeConfigPath)
 
 Write-Host ""
 Write-Host "Step 4: Optional OpenCode capability packs" -ForegroundColor Green
+$currentPackDefaults = @{
+    browser = $true
+    docs = $false
+    sheets = $false
+    computer = $false
+    social = $false
+}
+if ($currentSettings.OpenCode -and $currentSettings.OpenCode.Packs) {
+    if ($null -ne $currentSettings.OpenCode.Packs.Browser) { $currentPackDefaults.browser = [bool]$currentSettings.OpenCode.Packs.Browser }
+    if ($null -ne $currentSettings.OpenCode.Packs.Docs) { $currentPackDefaults.docs = [bool]$currentSettings.OpenCode.Packs.Docs }
+    if ($null -ne $currentSettings.OpenCode.Packs.Sheets) { $currentPackDefaults.sheets = [bool]$currentSettings.OpenCode.Packs.Sheets }
+    if ($null -ne $currentSettings.OpenCode.Packs.Computer) { $currentPackDefaults.computer = [bool]$currentSettings.OpenCode.Packs.Computer }
+    if ($null -ne $currentSettings.OpenCode.Packs.Social) { $currentPackDefaults.social = [bool]$currentSettings.OpenCode.Packs.Social }
+}
 $packSelections = @{
-    browser = Read-BooleanAnswer -Prompt "Enable the browser pack (general browsing and screenshots)?" -Default $currentSettings.OpenCode.Packs.Browser
-    docs = Read-BooleanAnswer -Prompt "Enable the docs pack (PDF and Word workflows)?" -Default $currentSettings.OpenCode.Packs.Docs
-    sheets = Read-BooleanAnswer -Prompt "Enable the sheets pack (Excel and CSV workflows)?" -Default $currentSettings.OpenCode.Packs.Sheets
-    computer = Read-BooleanAnswer -Prompt "Enable the computer pack (mouse, keyboard, desktop control)?" -Default $currentSettings.OpenCode.Packs.Computer
-    social = Read-BooleanAnswer -Prompt "Enable the social pack (LinkedIn and X style workflows)?" -Default $currentSettings.OpenCode.Packs.Social
+    browser = Read-BooleanAnswer -Prompt "Enable the browser pack (general browsing and screenshots)?" -Default $currentPackDefaults.browser
+    docs = Read-BooleanAnswer -Prompt "Enable the docs pack (PDF and Word workflows)?" -Default $currentPackDefaults.docs
+    sheets = Read-BooleanAnswer -Prompt "Enable the sheets pack (Excel and CSV workflows)?" -Default $currentPackDefaults.sheets
+    computer = Read-BooleanAnswer -Prompt "Enable the computer pack (mouse, keyboard, desktop control)?" -Default $currentPackDefaults.computer
+    social = Read-BooleanAnswer -Prompt "Enable the social pack (LinkedIn and X style workflows)?" -Default $currentPackDefaults.social
 }
 $packInstallResults = @{}
 foreach ($packName in $packSelections.Keys) {
