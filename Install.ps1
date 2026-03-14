@@ -13,7 +13,7 @@ $settingsExample = Join-Path $configDir "settings.example.json"
 $settingsLocal = Join-Path $configDir "settings.json"
 $opencodeExample = Join-Path $configDir "opencode.example.json"
 $packageJsonPath = Join-Path $projectRoot "package.json"
-$personalDataPath = Join-Path $projectRoot "PERSONAL DATA.md"
+$personalDataPath = Join-Path $projectRoot "PERSONAL DATA.local.md"
 $defaultOpenCodeConfigPath = Join-Path $env:USERPROFILE ".config\opencode\config.json"
 
 . (Join-Path $projectRoot "config\Load-BotConfig.ps1")
@@ -391,7 +391,7 @@ Ensure-Directory -Path (Split-Path -Parent $openCodeConfigPath)
 
 Write-Host ""
 Write-Host "Step 4: Personal data file" -ForegroundColor Green
-$fillPersonalData = Read-BooleanAnswer -Prompt "Do you want to populate PERSONAL DATA.md now?" -Default $true
+$fillPersonalData = Read-BooleanAnswer -Prompt "Do you want to populate PERSONAL DATA.local.md now?" -Default $true
 
 $personalProfile = @{
     FullName = "Not set"
@@ -484,7 +484,7 @@ if (Test-Path $opencodeExample) {
 }
 
 Write-PersonalDataFile -Path $personalDataPath -Profile $personalProfile
-Write-Host "[Setup] Updated PERSONAL DATA.md" -ForegroundColor Green
+Write-Host "[Setup] Updated PERSONAL DATA.local.md" -ForegroundColor Green
 
 if (-not $SkipNetworkChecks) {
     Write-Host ""
@@ -506,7 +506,7 @@ Write-Host "What was done:" -ForegroundColor Cyan
 Write-Host "- Created or verified archives and profile folders."
 Write-Host "- Installed or checked OpenCode and Playwright dependencies."
 Write-Host "- Wrote config/settings.json with your local values."
-Write-Host "- Updated PERSONAL DATA.md with your local information."
+Write-Host "- Updated PERSONAL DATA.local.md with your local information."
 Write-Host "- Copied the OpenCode user config template."
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Green

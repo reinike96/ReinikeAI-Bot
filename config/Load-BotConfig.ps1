@@ -110,7 +110,7 @@ function Import-BotSettings {
             WorkDir          = $root
             ArchivesDir      = Join-Path $root "archives"
             DownloadsDir     = $downloadsDir
-            PersonalDataFile = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "PERSONAL_DATA_FILE" -JsonPath "paths.personalDataFile" -DefaultValue (Join-Path $root "PERSONAL DATA.md")
+            PersonalDataFile = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "PERSONAL_DATA_FILE" -JsonPath "paths.personalDataFile" -DefaultValue (Join-Path $root "PERSONAL DATA.local.md")
         }
     }
 }

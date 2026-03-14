@@ -134,7 +134,7 @@ This script:
 - asks whether OpenCode should be installed automatically if it is missing
 - asks whether Playwright dependencies should be installed automatically
 - writes `config/settings.json` for you
-- updates the local `PERSONAL DATA.md` file
+- updates the local `PERSONAL DATA.local.md` file
 - copies the OpenCode user config template for you
 - runs Telegram and OpenRouter checks unless you use `-SkipNetworkChecks`
 

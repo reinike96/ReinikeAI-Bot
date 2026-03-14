@@ -29,6 +29,6 @@
   },
   "paths": {
     "downloadsDir": ".\\archives",
-    "personalDataFile": ".\\PERSONAL DATA.md"
+    "personalDataFile": ".\\PERSONAL DATA.local.md"
   }
 }
