@@ -112,6 +112,18 @@ function Get-PythonCommandName {
     return $null
 }
 
+function Get-NpmCommandPath {
+    param([string]$CommandName)
+
+    $npmBin = Join-Path $env:APPDATA "npm"
+    $cmdPath = Join-Path $npmBin "$CommandName.cmd"
+    if (Test-Path $cmdPath) {
+        return $cmdPath
+    }
+
+    return $CommandName
+}
+
 function Ensure-GitRepository {
     param(
         [string]$RepositoryUrl,
@@ -416,8 +428,8 @@ function Install-CapabilityPack {
                 Success = $true
                 Message = "Docs pack installed."
                 McpDefinitions = @{
-                    file_converter = [pscustomobject]@{ type = "local"; enabled = $true; command = @($pythonCmd, (Join-Path $pdfRepo "start_mcp_server.py")) }
-                    word_document = [pscustomobject]@{ type = "local"; enabled = $true; command = @($pythonCmd, (Join-Path $wordRepo "word_mcp_server.py")) }
+                    file_converter = [pscustomobject]@{ type = "local"; enabled = $true; command = @($pythonCmd, "-X", "utf8", (Join-Path $pdfRepo "file_converter_server.py")) }
+                    word_document = [pscustomobject]@{ type = "local"; enabled = $true; command = @($pythonCmd, "-X", "utf8", (Join-Path $wordRepo "word_mcp_server.py")) }
                 }
             }
         }
@@ -430,7 +442,7 @@ function Install-CapabilityPack {
                 Success = $true
                 Message = "Sheets pack installed."
                 McpDefinitions = @{
-                    excel_master = [pscustomobject]@{ type = "local"; enabled = $true; command = @("excel-mcp-server") }
+                    excel_master = [pscustomobject]@{ type = "local"; enabled = $true; command = @(Get-NpmCommandPath -CommandName "excel-mcp-server") }
                 }
             }
         }
@@ -443,7 +455,7 @@ function Install-CapabilityPack {
                 Success = $true
                 Message = "Computer pack installed."
                 McpDefinitions = @{
-                    computer_control = [pscustomobject]@{ type = "local"; enabled = $true; command = @("mcp-control") }
+                    computer_control = [pscustomobject]@{ type = "local"; enabled = $true; command = @(Get-NpmCommandPath -CommandName "mcp-control") }
                 }
             }
         }
@@ -456,7 +468,7 @@ function Install-CapabilityPack {
                 Success = $true
                 Message = "Social pack installed. Some workflows may still require manual browser-extension or session setup."
                 McpDefinitions = @{
-                    playwriter = [pscustomobject]@{ type = "local"; enabled = $true; command = @("playwriter") }
+                    playwriter = [pscustomobject]@{ type = "local"; enabled = $true; command = @(Get-NpmCommandPath -CommandName "playwriter") }
                 }
             }
         }
