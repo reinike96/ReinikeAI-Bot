@@ -6,7 +6,8 @@
 
 ### 1. SEARCH GOOGLE (MOST RECOMMENDED)
 Use this for **ANY** Google search. It is human-like and bypasses CAPTCHAs.
-`powershell -File ".\skills\Playwright\playwright-nav.ps1" -Action SearchGoogle -Url "search query" -Out "C:\path\to\repo\archives\results.png"`
+- **URL:** Pass ONLY the search query text (e.g., "zapatillas"), NOT a Google URL
+- **Example:** `powershell -File ".\skills\Playwright\playwright-nav.ps1" -Action SearchGoogle -Url "zapatillas" -Out "C:\path\to\repo\archives\results.png"`
 
 ### 2. TAKE SCREENSHOT (FOR SPECIFIC SITES)
 `powershell -File ".\skills\Playwright\playwright-nav.ps1" -Action Screenshot -Url "https://example.com" -Out "C:\path\to\repo\archives\capture.png"`
@@ -31,4 +32,5 @@ Use this for **ANY** Google search. It is human-like and bypasses CAPTCHAs.
 ### Troubleshooting Common LLM Errors:
 - If you forget `-Out`, the script will save to a default location in `archives\`.
 - If you use a Google Search URL instead of an action, the script will automatically redirect it to `SearchGoogle`.
+- **IMPORTANT:** If you already have a Google search URL (like `https://google.com/search?q=zapatillas`), use `Screenshot` action instead of `SearchGoogle` to avoid conflicts.
 - If you use `GetScreenshot`, the script will automatically alias it to `Screenshot`.

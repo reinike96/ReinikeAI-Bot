@@ -207,7 +207,8 @@ function Invoke-TelegramCallbackRoute {
     }
 
     if ($callbackData -eq "restart_confirm") {
-        Send-TelegramText -chatId $chatId -text "Restarting the full system. Please wait a few seconds..."
+        $stopSummary = Stop-OpenCodeServer -BotConfig $BotConfig -Reason "restart command" -StopActiveJobs
+        Send-TelegramText -chatId $chatId -text "Restarting the full system. OpenCode stopped: jobs=$($stopSummary.JobsStopped), processes=$($stopSummary.ProcessesStopped). Please wait a few seconds..."
         Write-DailyLog -message "/restart confirmed from button. Exiting so RunBot.bat can restart the process." -type "SYSTEM"
         Invoke-RestMethod -Uri "$ApiUrl/getUpdates?offset=$Offset&limit=1" -Method Get -ErrorAction SilentlyContinue | Out-Null
         exit 0
@@ -308,6 +309,7 @@ function Invoke-TelegramMessageRoute {
         $helpMsg = "*Bot Commands:*`n`n"
         $helpMsg += "*/new* - Clear conversation memory.`n"
         $helpMsg += "*/doctor* - Run local diagnostics.`n"
+        $helpMsg += "*/stopopencode* - Stop the OpenCode server and active OpenCode jobs.`n"
         $helpMsg += "*/restart* - Restart the bot and its connections.`n"
         $helpMsg += "*/thinking [low|none]* - Change reasoning effort.`n`n"
         $helpMsg += "*Orchestrator Capabilities:*`n"
@@ -332,6 +334,13 @@ function Invoke-TelegramMessageRoute {
     if ($text -eq "/doctor" -or $text -eq "/diag") {
         $doctorReport = Invoke-SystemDoctor -BotConfig $BotConfig -ApiUrl $ApiUrl -Token $Token -OpenRouterKey $OpenRouterKey -WorkDir $WorkDir
         Send-TelegramText -chatId $chatId -text $doctorReport
+        return
+    }
+
+    if ($text -eq "/stopopencode") {
+        $stopSummary = Stop-OpenCodeServer -BotConfig $BotConfig -Reason "telegram command /stopopencode" -StopActiveJobs
+        $reply = "OpenCode stop requested.`nJobs stopped: $($stopSummary.JobsStopped)`nProcesses stopped: $($stopSummary.ProcessesStopped)`nRemaining server processes: $($stopSummary.RemainingProcesses)"
+        Send-TelegramText -chatId $chatId -text $reply
         return
     }
 

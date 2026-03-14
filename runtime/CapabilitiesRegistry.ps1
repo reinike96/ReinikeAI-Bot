@@ -1,6 +1,8 @@
 function Get-OpenCodeTaskEnvelope {
     param(
-        [string]$Task
+        [string]$Task,
+        [string]$PreferredAgent = "build",
+        [string]$ExtraInstructions = ""
     )
 
     $normalizedTask = if ($null -ne $Task) { $Task.Trim() } else { "" }
@@ -8,14 +10,82 @@ function Get-OpenCodeTaskEnvelope {
         return ""
     }
 
-    return @"
-Use the `build` agent as the default execution route for this task.
-Only if a specialized project agent is clearly needed for part of the work, choose and use it internally as a sub-agent. Available specialized agents: `browser`, `docs`, `sheets`, `computer`, `social`.
+    $agentName = if ([string]::IsNullOrWhiteSpace($PreferredAgent)) { "build" } else { $PreferredAgent.Trim() }
+    $routingLine = if ($agentName -eq "build") {
+        "Use the build agent as the default execution route for this task."
+    }
+    else {
+        "Use the $agentName agent for this task."
+    }
+
+    $baseText = @"
+$routingLine
+Only if a specialized project agent is clearly needed for part of the work, choose and use it internally as a sub-agent. Available specialized agents: browser, docs, sheets, computer, social.
 Do not switch agents unless there is a concrete need.
 
 Task:
 $normalizedTask
 "@.Trim()
+
+    if (-not [string]::IsNullOrWhiteSpace($ExtraInstructions)) {
+        return ($baseText + "`n`nExecution notes:`n$ExtraInstructions").Trim()
+    }
+
+    return $baseText
+}
+
+function Get-GoogleScreenshotQueryFromTask {
+    param(
+        [string]$Task
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Task)) {
+        return ""
+    }
+
+    $patterns = @(
+        '(?is)search for\s+["''](?<q>[^"'']+)["'']\s+on\s+google',
+        '(?is)busca(?:r)?\s+["''](?<q>[^"'']+)["'']\s+en\s+google',
+        '(?is)google(?:\.com)?[, ]+\s*search(?: for)?\s+["''](?<q>[^"'']+)["'']',
+        '(?is)buscar?\s+en\s+google\s+["''](?<q>[^"'']+)["'']',
+        '(?is)search\s+google\s+for\s+["''](?<q>[^"'']+)["'']',
+        '(?is)busca(?:r)?\s+(?<q>.+?)\s+en\s+google',
+        '(?is)search for\s+(?<q>.+?)\s+on\s+google',
+        '(?is)search google for\s+(?<q>.+?)(?:$|,|\.)'
+    )
+
+    foreach ($pattern in $patterns) {
+        if ($Task -match $pattern) {
+            $candidate = $Matches['q'].Trim(' ', '"', "'", '.', ',', ';', ':')
+            if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                return $candidate
+            }
+        }
+    }
+
+    $quoted = [regex]::Matches($Task, '["'']([^"'']{2,80})["'']')
+    if ($quoted.Count -gt 0) {
+        return $quoted[0].Groups[1].Value.Trim()
+    }
+
+    return ""
+}
+
+function Test-ShouldUseLocalGoogleResultsScreenshots {
+    param(
+        [string]$Task
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Task)) {
+        return $false
+    }
+
+    $normalizedTask = $Task.ToLowerInvariant()
+    $mentionsGoogle = $normalizedTask -match 'google'
+    $mentionsShot = $normalizedTask -match 'screenshot|screenshots|captura|capturas|foto|fotos|image|images'
+    $mentionsResults = $normalizedTask -match 'result|results|resultado|resultados|link|links|enlace|enlaces|page 1|page 2|page 3|primera|segunda|tercera'
+
+    return ($mentionsGoogle -and $mentionsShot -and $mentionsResults)
 }
 
 function New-OpenCodeExecutionPlan {
@@ -24,19 +94,62 @@ function New-OpenCodeExecutionPlan {
         [string[]]$EnableMCPs = @()
     )
 
-    $wrappedTask = Get-OpenCodeTaskEnvelope -Task $Task
+    $normalizedTask = if ($null -ne $Task) { $Task.ToLowerInvariant() } else { "" }
+    $capability = "general"
+    $agent = "build"
+    $label = "OpenCode Build"
+    $riskLevel = "medium"
+    $executionMode = "agent"
+    $timeoutSec = 1800
+    $extraInstructions = ""
+
+    $browserPattern = '(google|browser|navega|navegar|busca|buscar|search|screenshot|captura|capturas|pantallazo|playwright|web)'
+    if ($normalizedTask -match $browserPattern) {
+        $capability = "browser"
+        $extraInstructions = @"
+For browser automation, keep using the build agent unless a specialized sub-agent is strictly necessary.
+Prefer a deterministic Playwright workflow over ad-hoc visual retries.
+Do not restart steps that already succeeded. If the browser is already on the Google results page, continue from there instead of reopening Google and typing the same query again.
+If the task is to capture screenshots of the first Google results, prefer the local Playwright wrapper action GoogleTopResultsScreenshots.
+"@.Trim()
+    }
+
+    if (Test-ShouldUseLocalGoogleResultsScreenshots -Task $Task) {
+        $query = Get-GoogleScreenshotQueryFromTask -Task $Task
+        if (-not [string]::IsNullOrWhiteSpace($query)) {
+            $escapedQuery = $query.Replace('"', '\"')
+            $capability = "browser"
+            $label = "Playwright Google Results"
+            $executionMode = "script"
+            $timeoutSec = 600
+            return [PSCustomObject]@{
+                Capability = $capability
+                Agent = $null
+                Model = $null
+                Label = $label
+                RiskLevel = $riskLevel
+                ExpectedTimeoutSec = $timeoutSec
+                ExecutionMode = $executionMode
+                EnableMCPs = @()
+                DelegatedTask = $Task
+                ScriptCommand = "powershell -File .\skills\Playwright\playwright-nav.ps1 -Action GoogleTopResultsScreenshots -Url `"$escapedQuery`" -Out `".\archives`""
+            }
+        }
+    }
+
+    $wrappedTask = Get-OpenCodeTaskEnvelope -Task $Task -PreferredAgent $agent -ExtraInstructions $extraInstructions
     if ([string]::IsNullOrWhiteSpace($wrappedTask)) {
         $wrappedTask = $Task
     }
 
     return [PSCustomObject]@{
-        Capability = "general"
-        Agent = "build"
+        Capability = $capability
+        Agent = $agent
         Model = $null
-        Label = "OpenCode Build"
-        RiskLevel = "medium"
-        ExpectedTimeoutSec = 1800
-        ExecutionMode = "agent"
+        Label = $label
+        RiskLevel = $riskLevel
+        ExpectedTimeoutSec = $timeoutSec
+        ExecutionMode = $executionMode
         EnableMCPs = @($EnableMCPs)
         DelegatedTask = $wrappedTask
     }

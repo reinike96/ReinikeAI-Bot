@@ -138,6 +138,27 @@ function Write-DailyLog {
     Write-Host $logEntry -ForegroundColor Gray
 }
 
+function Invoke-BotShutdown {
+    param(
+        [string]$Reason = "process exit",
+        [switch]$StopActiveJobs
+    )
+
+    if ($script:BotShutdownInvoked) {
+        return
+    }
+
+    $script:BotShutdownInvoked = $true
+
+    try {
+        $summary = Stop-OpenCodeServer -BotConfig $botConfig -Reason $Reason -StopActiveJobs:$StopActiveJobs
+        Write-DailyLog -message "Bot shutdown cleanup complete. Reason='$Reason' jobs=$($summary.JobsStopped) processes=$($summary.ProcessesStopped) remaining=$($summary.RemainingProcesses)" -type "SYSTEM"
+    }
+    catch {
+        Write-DailyLog -message "Bot shutdown cleanup failed. Reason='$Reason' error=$($_.Exception.Message)" -type "ERROR"
+    }
+}
+
 
 # --- Helper: Fix job output encoding (Latin-1 misread as UTF-8) ---
 function Repair-JobEncoding {
@@ -343,6 +364,24 @@ $cleanupMemJob = Start-ThreadJob -Name "CleanupMemory" -ScriptBlock {
 
 Initialize-RuntimeState -BotConfig $botConfig
 
+$script:BotShutdownInvoked = $false
+$null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -SupportEvent -Action {
+    try {
+        if (Get-Command Stop-OpenCodeServer -ErrorAction SilentlyContinue) {
+            Stop-OpenCodeServer -BotConfig $using:botConfig -Reason "PowerShell exiting" -StopActiveJobs | Out-Null
+        }
+    }
+    catch {}
+}
+$script:CancelKeyHandler = [ConsoleCancelEventHandler]{
+    param($sender, $eventArgs)
+    try {
+        Invoke-BotShutdown -Reason "console cancel" -StopActiveJobs
+    }
+    catch {}
+}
+[Console]::add_CancelKeyPress($script:CancelKeyHandler)
+
 # Wait for critical startup tasks to finish.
 $fileResult = $loadFilesJob | Wait-Job | Receive-Job
 $sysPrompt = $fileResult.sys
@@ -385,27 +424,36 @@ if (-not [string]::IsNullOrWhiteSpace($startupChatId)) {
     Write-Host "[SYSTEM] Startup message sent to $startupChatId" -ForegroundColor Green
 }
 
-while ($true) {
-    try {
-        Invoke-JobMaintenanceCycle -WorkDir $workDir
+try {
+    while ($true) {
+        try {
+            Invoke-JobMaintenanceCycle -WorkDir $workDir
 
-        # Telegram polling
-        $timeout = if ((Get-PendingChats).Count -gt 0) { 0 } else { 3 }
-        $updates = Invoke-RestMethod -Uri "$apiUrl/getUpdates?offset=$offset&timeout=$timeout" -Method Get -TimeoutSec 45
-        $offset = [int](Invoke-TelegramUpdateRouter -UpdatesResponse $updates -CurrentOffset $offset -BotConfig $botConfig -ApiUrl $apiUrl -Token $token -OpenRouterKey $openRouterKey -WorkDir $workDir)
-        
-        Invoke-PendingChatProcessing -FullSystemPrompt $fullSys -ApiUrl $apiUrl -WorkDir $workDir
-    }
-    catch {
-        $err = $_.Exception.ToString()
-        if ($err -match "409" -or $err -match "Conflict") {
-            Write-DailyLog -message "HTTP 409 conflict: another instance is using the bot. Retrying in 5 seconds..." -type "ERROR"
-            Write-Host "[!] Conflict detected. If this persists, check for manual processes." -ForegroundColor Red
-            Start-Sleep -Seconds 5
+            # Telegram polling
+            $timeout = if ((Get-PendingChats).Count -gt 0) { 0 } else { 3 }
+            $updates = Invoke-RestMethod -Uri "$apiUrl/getUpdates?offset=$offset&timeout=$timeout" -Method Get -TimeoutSec 45
+            $offset = [int](Invoke-TelegramUpdateRouter -UpdatesResponse $updates -CurrentOffset $offset -BotConfig $botConfig -ApiUrl $apiUrl -Token $token -OpenRouterKey $openRouterKey -WorkDir $workDir)
+            
+            Invoke-PendingChatProcessing -FullSystemPrompt $fullSys -ApiUrl $apiUrl -WorkDir $workDir
         }
-        else {
-            Write-DailyLog -message "Error in main loop: $_" -type "ERROR"
-            Start-Sleep -Seconds 3
+        catch {
+            $err = $_.Exception.ToString()
+            if ($err -match "409" -or $err -match "Conflict") {
+                Write-DailyLog -message "HTTP 409 conflict: another instance is using the bot. Retrying in 5 seconds..." -type "ERROR"
+                Write-Host "[!] Conflict detected. If this persists, check for manual processes." -ForegroundColor Red
+                Start-Sleep -Seconds 5
+            }
+            else {
+                Write-DailyLog -message "Error in main loop: $_" -type "ERROR"
+                Start-Sleep -Seconds 3
+            }
         }
     }
+}
+finally {
+    Invoke-BotShutdown -Reason "main script exiting" -StopActiveJobs
+    if ($script:CancelKeyHandler) {
+        [Console]::remove_CancelKeyPress($script:CancelKeyHandler)
+    }
+    Unregister-Event -SourceIdentifier PowerShell.Exiting -ErrorAction SilentlyContinue
 }

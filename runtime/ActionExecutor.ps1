@@ -36,6 +36,21 @@ function Invoke-ParsedAction {
         $capabilityRisk = Get-CapabilityRiskProfile -Capability $plan.Capability
         $msgStatus = "$emojiHourglass Delegating to OpenCode ($($plan.Capability), risk: $($capabilityRisk.Level)): $taskDescription"
 
+        if ($plan.ExecutionMode -eq "script" -and -not [string]::IsNullOrWhiteSpace("$($plan.ScriptCommand)")) {
+            $scriptLabel = if (-not [string]::IsNullOrWhiteSpace($plan.Label)) { $plan.Label } else { "Local Script" }
+            $scriptStatus = "$emojiHourglass Running local workflow ($($plan.Capability), risk: $($capabilityRisk.Level)): $taskDescription"
+            $jobRecord = Start-ScriptJob -scriptCmd "$($plan.ScriptCommand)" -chatId $ChatId -taskLabel $scriptLabel -originalTask $taskDescription
+            $jobRecord.Label = $scriptLabel
+            $jobRecord.Capability = $plan.Capability
+            $jobRecord.CapabilityRisk = $capabilityRisk.Level
+            $jobRecord.ExecutionMode = $plan.ExecutionMode
+            Update-TelegramStatus -job $jobRecord -text $scriptStatus
+            Add-ActiveJob -JobRecord $jobRecord
+            Write-JobsFile
+            $result.SuppressFinalReply = $true
+            return [PSCustomObject]$result
+        }
+
         if ($plan.Capability -eq "computer") {
             $confirmationId = [guid]::NewGuid().ToString("N")
             Add-PendingConfirmation -ConfirmationId $confirmationId -Payload @{

@@ -1,10 +1,16 @@
 import sys
 import random
 import time
-import json
 import os
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
+
+def slugify(value):
+    cleaned = ''.join(ch.lower() if ch.isalnum() else '_' for ch in (value or 'result'))
+    while '__' in cleaned:
+        cleaned = cleaned.replace('__', '_')
+    cleaned = cleaned.strip('_')
+    return (cleaned[:50] or 'result')
 
 def human_browser_task(action, url_arg, output_path=None):
     with sync_playwright() as p:
@@ -56,41 +62,48 @@ def human_browser_task(action, url_arg, output_path=None):
                 time.sleep(random.uniform(0.1, 0.3))
 
         try:
-            if action == 'SearchGoogle':
-                human_jitter()
-                # Go to home first
-                page.goto("https://www.google.com", wait_until="networkidle")
-                time.sleep(random.uniform(3, 5))
-                
-                # Handle cookie consent if visible
+            def accept_google_consent():
+                button_names = ["Accept all", "Aceptar todo", "Alle akzeptieren"]
+                for button_name in button_names:
+                    try:
+                        cookie_button = page.get_by_role("button", name=button_name).first
+                        if cookie_button.is_visible():
+                            cookie_button.click()
+                            time.sleep(random.uniform(1, 2))
+                            return
+                    except:
+                        pass
+
                 try:
-                    cookie_button = page.get_by_role("button", name="Accept all")
-                    if not cookie_button.is_visible():
-                         cookie_button = page.get_by_role("button", name="Aceptar todo")
-                    
-                    if cookie_button.is_visible():
-                        cookie_button.click()
+                    fallback_button = page.locator("#L2AGLb").first
+                    if fallback_button.is_visible():
+                        fallback_button.click()
                         time.sleep(random.uniform(1, 2))
                 except:
                     pass
-                
-                # Look for search box
+
+            def google_search(query):
+                human_jitter()
+                page.goto("https://www.google.com", wait_until="networkidle")
+                time.sleep(random.uniform(3, 5))
+                accept_google_consent()
+
                 search_box = page.locator("textarea[name='q']").first
                 search_box.wait_for(state="visible", timeout=15000)
                 search_box.click(force=True)
                 time.sleep(random.uniform(0.5, 1.2))
                 search_box.fill("")
 
-                query = url_arg
                 for char in query:
                     search_box.type(char, delay=random.uniform(50, 180))
-                
+
                 time.sleep(random.uniform(0.5, 1))
                 page.keyboard.press("Enter")
-                
-                # Wait for results
                 page.wait_for_load_state("networkidle")
-                time.sleep(random.uniform(5, 8))
+                time.sleep(random.uniform(3, 5))
+
+            if action == 'SearchGoogle':
+                google_search(url_arg)
                 
                 if output_path:
                     page.screenshot(path=output_path, full_page=True)
@@ -98,6 +111,54 @@ def human_browser_task(action, url_arg, output_path=None):
                 else:
                     content = page.evaluate("document.body.innerText")
                     print(content)
+            elif action == 'GoogleTopResultsScreenshots':
+                output_dir = output_path or os.path.join(project_root, "archives")
+                os.makedirs(output_dir, exist_ok=True)
+                google_search(url_arg)
+
+                raw_results = page.locator("a:has(h3)").evaluate_all("""(anchors) => anchors.map(anchor => {
+                    const href = anchor.href || '';
+                    const titleNode = anchor.querySelector('h3');
+                    const title = titleNode ? titleNode.textContent.trim() : '';
+                    return { href, title };
+                })""")
+
+                top_results = []
+                seen = set()
+                for item in raw_results:
+                    href = item.get("href", "")
+                    if (not href) or href in seen:
+                        continue
+                    if "/search?" in href or "google.com/preferences" in href or href.startswith("javascript:"):
+                        continue
+                    seen.add(href)
+                    top_results.append(item)
+                    if len(top_results) == 3:
+                        break
+
+                if not top_results:
+                    raise Exception("No Google result links were detected.")
+
+                saved_files = []
+                for index, item in enumerate(top_results, start=1):
+                    result_page = context.new_page()
+                    try:
+                        result_page.goto(item["href"], wait_until="domcontentloaded", timeout=60000)
+                        try:
+                            result_page.wait_for_load_state("networkidle", timeout=10000)
+                        except:
+                            pass
+                        time.sleep(random.uniform(2, 3))
+                        file_name = f"{index:02d}_{slugify(item.get('title', 'result'))}.png"
+                        file_path = os.path.join(output_dir, file_name)
+                        result_page.screenshot(path=file_path, full_page=True)
+                        saved_files.append((item.get("title", ""), item["href"], file_path))
+                    finally:
+                        result_page.close()
+
+                print(f"Top Google results processed for query: {url_arg}")
+                for title, href, file_path in saved_files:
+                    print(f"{title} | {href} | {file_path}")
                 
             else:
                 # Actions requiring direct URL (Screenshot, GetContent, Download)

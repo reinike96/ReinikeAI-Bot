@@ -4,6 +4,8 @@
 - **ORCHESTRATOR SKILLS:** Scripts in the `skills/` folder listed below must be executed directly by the orchestrator via `[CMD: ...]` and must not be delegated to OpenCode:
 	1. DuckSearch
 	2. Telegram_Sender
+	- File delivery script path: `.\skills\Telegram_Sender\SendFile.ps1`
+	- Compatibility alias: `.\skills\Telegram_Sender\send_file.ps1`
 	3. OpenCode-Status
 	4. System_Diagnostics
 	5. File_Tools

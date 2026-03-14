@@ -5,7 +5,8 @@ param(
     [string]$ChatId = ""
 )
 
-$projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
 . (Join-Path $projectRoot "config\Load-BotConfig.ps1")
 $botConfig = Import-BotSettings -ProjectRoot $projectRoot
 
@@ -22,6 +23,11 @@ if (-not (Test-Path $FilePath)) {
     Write-Host "Error: File not found: $FilePath" -ForegroundColor Red
     exit 1
 }
+
+try {
+    $FilePath = [System.IO.Path]::GetFullPath($FilePath)
+}
+catch {}
 
 $fileInfo = Get-Item $FilePath
 if ($fileInfo.Length -eq 0) {
@@ -76,7 +82,12 @@ try {
         }
     }
     else {
-        Write-Host "Error sending file: $($postTask.Result.StatusCode)" -ForegroundColor Red
+        $responseBody = ""
+        try {
+            $responseBody = $postTask.Result.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        }
+        catch {}
+        Write-Host "Error sending file: $($postTask.Result.StatusCode) $responseBody" -ForegroundColor Red
         exit 1
     }
     $postTask.Result.Dispose()

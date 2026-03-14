@@ -34,6 +34,12 @@ Send a file:
 .\SendFile.ps1 -FilePath "C:\path\to\file.pdf"
 ```
 
+Compatibility alias:
+
+```powershell
+.\send_file.ps1 -FilePath "C:\path\to\file.pdf"
+```
+
 ## Parameters
 
 ### SendMessage.ps1

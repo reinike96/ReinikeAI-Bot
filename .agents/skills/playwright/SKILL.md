@@ -8,7 +8,7 @@ description: Web navigation, text extraction and screenshots using Playwright CL
 For any navigation task, use the PowerShell script located in the project folder:
 
 ```bash
-powershell -File ".\skills\Playwright\playwright-nav.ps1" -Action [GetContent|Screenshot|Download|SearchGoogle] -Url "URL" [-Out "OUTPUT_PATH"]
+powershell -File ".\skills\Playwright\playwright-nav.ps1" -Action [GetContent|Screenshot|Download|SearchGoogle|GoogleTopResultsScreenshots] -Url "URL" [-Out "OUTPUT_PATH"]
 ```
 
 ## Available Actions
@@ -17,7 +17,8 @@ powershell -File ".\skills\Playwright\playwright-nav.ps1" -Action [GetContent|Sc
 2. **Screenshot**: Captures full page screenshot. Requires `-Out` (e.g., `.\archives\screenshot.png`).
 3. **Download**: Downloads a file. Requires `-Out` as destination folder (e.g., `.\archives`).
 4. **SearchGoogle**: Navigates to Google and types a search query.
-5. **Workplace**: Always use: `.\archives`
+5. **GoogleTopResultsScreenshots**: Searches Google, opens the first 3 organic result links, and saves one screenshot per result into the output directory.
+6. **Workplace**: Always use: `.\archives`
 
 ## Default Behavior
 

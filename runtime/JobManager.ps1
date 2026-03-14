@@ -101,6 +101,17 @@ function Complete-ActiveJobs {
         }
         Write-DailyLog -message "Job $($j.Job.Id) result captured: len=$($subRes.Length) chars" -type "JOB"
 
+        if ($j.CheckpointPath) {
+            $checkpointStatus = if ($subRes -match '^\[ERROR_') { "failed" } else { "completed" }
+            $checkpointAction = if ($checkpointStatus -eq "completed") { "Task completed" } else { "Task finished with error" }
+            try {
+                Update-TaskCheckpointState -CheckpointPath $j.CheckpointPath -TaskText $j.Task -Status $checkpointStatus -ResultText $subRes -LastAction $checkpointAction -LastError $(if ($checkpointStatus -eq "failed") { $subRes } else { "" })
+            }
+            catch {
+                Write-DailyLog -message "Checkpoint update failed for job $($j.Job.Id): $_" -type "WARN"
+            }
+        }
+
         Remove-Job -Job $j.Job -Force -ErrorAction SilentlyContinue
 
         if ($j.Type -eq "Subagent" -or $j.Type -eq "OpenCode" -or $j.Type -eq "Script") {
@@ -191,6 +202,15 @@ function Remove-StuckJobs {
         $errMsg += $possibleCause
         $errMsg += "`n`n_The orchestrator cancelled this task._"
         Send-TelegramText -chatId $j.ChatId -text $errMsg
+
+        if ($j.CheckpointPath) {
+            try {
+                Update-TaskCheckpointState -CheckpointPath $j.CheckpointPath -TaskText $j.Task -Status "stuck" -LastAction "Task cancelled by stuck-job guard" -LastError "OpenCode task became unresponsive after $elapsed minutes."
+            }
+            catch {
+                Write-DailyLog -message "Checkpoint update failed for stuck job $($j.Job.Id): $_" -type "WARN"
+            }
+        }
 
         Stop-Job -Job $j.Job -ErrorAction SilentlyContinue | Out-Null
         Remove-Job -Job $j.Job -Force -ErrorAction SilentlyContinue

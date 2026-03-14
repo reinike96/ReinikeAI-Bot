@@ -1,6 +1,6 @@
 param (
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Screenshot", "GetContent", "Download", "SearchGoogle", "GetScreenshot")]
+    [ValidateSet("Screenshot", "GetContent", "Download", "SearchGoogle", "GetScreenshot", "GoogleTopResultsScreenshots")]
     [string]$Action,
 
     [Parameter(Mandatory = $true)]
@@ -55,13 +55,17 @@ if (($Action -eq "Screenshot" -or $Action -eq "SearchGoogle" -or $Action -eq "Do
     $Out = Join-Path $botConfig.Paths.ArchivesDir "browser_output_$timestamp.png"
     Write-Host "[Playwright] Missing -Out parameter. Using default: $Out" -ForegroundColor Yellow
 }
+elseif ($Action -eq "GoogleTopResultsScreenshots" -and -not $Out) {
+    $Out = $botConfig.Paths.ArchivesDir
+    Write-Host "[Playwright] Missing -Out parameter. Using default directory: $Out" -ForegroundColor Yellow
+}
 
 if ($Out) {
     if (-not [System.IO.Path]::IsPathRooted($Out)) {
         $Out = Join-Path $projectRoot $Out
     }
 
-    if ($Action -eq "Download") {
+    if ($Action -eq "Download" -or $Action -eq "GoogleTopResultsScreenshots") {
         New-Item -ItemType Directory -Force -Path $Out | Out-Null
     }
     else {
