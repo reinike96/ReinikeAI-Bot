@@ -1,8 +1,10 @@
 ﻿$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "config\Load-BotConfig.ps1")
 . (Join-Path $scriptRoot "runtime\ActionPolicy.ps1")
+. (Join-Path $scriptRoot "runtime\SkillRoutingPolicy.ps1")
 . (Join-Path $scriptRoot "runtime\ActionValidator.ps1")
 . (Join-Path $scriptRoot "runtime\CapabilitiesRegistry.ps1")
+. (Join-Path $scriptRoot "runtime\CapabilityPacks.ps1")
 . (Join-Path $scriptRoot "runtime\ActionGuards.ps1")
 . (Join-Path $scriptRoot "runtime\ActionExecutor.ps1")
 . (Join-Path $scriptRoot "runtime\ConversationEngine.ps1")
@@ -119,7 +121,19 @@ function Write-DailyLog {
         }
     }
     
-    $logEntry = "[$currentDate $timestamp] [$type] $message"
+    $sanitized = $message
+    $redactionPatterns = @(
+        '(?i)\b\d{8,10}:[A-Za-z0-9_-]{20,}\b',
+        '(?i)\b(sk-or-v1|sk-[A-Za-z0-9_-]+)[A-Za-z0-9_-]*\b',
+        '(?i)(Authorization["'':=\s]+Bearer\s+)[^\s]+',
+        '(?i)(serverPassword["'':=\s]+)[^\s,;]+',
+        '(?i)(openRouterApiKey["'':=\s]+)[^\s,;]+',
+        '(?i)(apiKey["'':=\s]+)[^\s,;]+'
+    )
+    foreach ($pattern in $redactionPatterns) {
+        $sanitized = [regex]::Replace($sanitized, $pattern, '$1[REDACTED]')
+    }
+    $logEntry = "[$currentDate $timestamp] [$type] $sanitized"
     $logEntry | Out-File -FilePath $logFile -Append -Encoding UTF8
     Write-Host $logEntry -ForegroundColor Gray
 }

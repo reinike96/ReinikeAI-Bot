@@ -9,6 +9,8 @@ $configDir = Join-Path $projectRoot "config"
 $archivesDir = Join-Path $projectRoot "archives"
 $profilesDir = Join-Path $projectRoot "profiles"
 $playwrightProfileDir = Join-Path $profilesDir "playwright"
+$externalDir = Join-Path $projectRoot "external"
+$externalMcpDir = Join-Path $externalDir "mcp"
 $settingsExample = Join-Path $configDir "settings.example.json"
 $settingsLocal = Join-Path $configDir "settings.json"
 $opencodeExample = Join-Path $configDir "opencode.example.json"
@@ -17,6 +19,7 @@ $personalDataPath = Join-Path $projectRoot "PERSONAL DATA.local.md"
 $defaultOpenCodeConfigPath = Join-Path $env:USERPROFILE ".config\opencode\config.json"
 
 . (Join-Path $projectRoot "config\Load-BotConfig.ps1")
+. (Join-Path $projectRoot "runtime\CapabilityPacks.ps1")
 if (Test-Path (Join-Path $projectRoot "Logo.ps1")) {
     & (Join-Path $projectRoot "Logo.ps1")
 }
@@ -70,6 +73,74 @@ function Ensure-Directory {
     param([string]$Path)
 
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
+}
+
+function Get-PythonCommandName {
+    if (Test-CommandAvailable -Name "python") { return "python" }
+    if (Test-CommandAvailable -Name "py") { return "py" }
+    return $null
+}
+
+function Ensure-GitRepository {
+    param(
+        [string]$RepositoryUrl,
+        [string]$TargetPath
+    )
+
+    if (-not (Test-CommandAvailable -Name "git")) {
+        throw "git is required to clone $RepositoryUrl."
+    }
+
+    if (Test-Path (Join-Path $TargetPath ".git")) {
+        Push-Location $TargetPath
+        try {
+            & git pull --ff-only
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to update repository at $TargetPath."
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+    else {
+        Ensure-Directory -Path (Split-Path -Parent $TargetPath)
+        & git clone $RepositoryUrl $TargetPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to clone $RepositoryUrl."
+        }
+    }
+}
+
+function Set-OpenCodeMcpServerDefinition {
+    param(
+        [object]$ConfigJson,
+        [string]$ServerName,
+        [object]$Definition
+    )
+
+    if (-not $ConfigJson.PSObject.Properties["mcp"]) {
+        $ConfigJson | Add-Member -NotePropertyName "mcp" -NotePropertyValue ([pscustomobject]@{})
+    }
+
+    $existing = $ConfigJson.mcp.PSObject.Properties[$ServerName]
+    if ($existing) {
+        $existing.Value = $Definition
+    }
+    else {
+        $ConfigJson.mcp | Add-Member -NotePropertyName $ServerName -NotePropertyValue $Definition
+    }
+}
+
+function Remove-OpenCodeMcpServerDefinition {
+    param(
+        [object]$ConfigJson,
+        [string]$ServerName
+    )
+
+    if ($ConfigJson.PSObject.Properties["mcp"]) {
+        $ConfigJson.mcp.PSObject.Properties.Remove($ServerName)
+    }
 }
 
 function Get-DetectedChromeExecutable {
@@ -231,6 +302,196 @@ function Save-JsonFile {
     $Data | ConvertTo-Json -Depth 10 | Set-Content -Path $Path -Encoding UTF8
 }
 
+function Update-OpenCodeAgentPackToggles {
+    param(
+        [string]$ConfigPath,
+        [hashtable]$PackSelections
+    )
+
+    if (-not (Test-Path $ConfigPath)) {
+        return $false
+    }
+
+    $json = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    $registry = Get-CapabilityPackRegistry
+
+    foreach ($pack in $registry) {
+        $enabled = [bool]$PackSelections[$pack.SettingKey]
+        $agentProp = $json.agent.PSObject.Properties[$pack.Agent]
+        if (-not $agentProp) {
+            continue
+        }
+
+        foreach ($flag in $pack.ToolFlags) {
+            $toolProp = $agentProp.Value.tools.PSObject.Properties[$flag]
+            if ($toolProp) {
+                $toolProp.Value = $enabled
+            }
+        }
+    }
+
+    $json | ConvertTo-Json -Depth 20 | Set-Content -Path $ConfigPath -Encoding UTF8
+    return $true
+}
+
+function Install-CapabilityPack {
+    param(
+        [string]$PackName
+    )
+
+    Ensure-Directory -Path $externalDir
+    Ensure-Directory -Path $externalMcpDir
+
+    switch ($PackName) {
+        "browser" {
+            $ok = Install-PlaywrightNodeDependencies -ProjectRoot $projectRoot
+            return [PSCustomObject]@{
+                Success = $ok
+                Message = if ($ok) { "Browser pack prepared with local Playwright dependencies." } else { "Browser pack setup failed." }
+                McpDefinitions = @{}
+            }
+        }
+        "docs" {
+            $pythonCmd = Get-PythonCommandName
+            if (-not $pythonCmd) {
+                throw "Python is required for the docs pack."
+            }
+            $pdfRepo = Join-Path $externalMcpDir "pdf-filler-recursive-simple-mcp"
+            $wordRepo = Join-Path $externalMcpDir "Office-Word-MCP-Server"
+
+            Ensure-GitRepository -RepositoryUrl "https://github.com/songminkyu/pdf-filler-recursive-simple-mcp.git" -TargetPath $pdfRepo
+            Push-Location $pdfRepo
+            try {
+                & npm install
+                if ($LASTEXITCODE -ne 0) { throw "npm install failed for the PDF MCP." }
+            }
+            finally {
+                Pop-Location
+            }
+
+            Ensure-GitRepository -RepositoryUrl "https://github.com/GongRzhe/Office-Word-MCP-Server.git" -TargetPath $wordRepo
+            Push-Location $wordRepo
+            try {
+                & $pythonCmd -m pip install -r requirements.txt
+                if ($LASTEXITCODE -ne 0) { throw "pip install failed for the Word MCP." }
+            }
+            finally {
+                Pop-Location
+            }
+
+            return [PSCustomObject]@{
+                Success = $true
+                Message = "Docs pack installed."
+                McpDefinitions = @{
+                    pdf_filler = [pscustomobject]@{ command = @("node", (Join-Path $pdfRepo "server\index.js")) }
+                    word_document = [pscustomobject]@{ command = @($pythonCmd, (Join-Path $wordRepo "word_mcp_server.py")) }
+                }
+            }
+        }
+        "sheets" {
+            & npm install -g @guillehr2/excel-mcp-server
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to install the sheets pack."
+            }
+            return [PSCustomObject]@{
+                Success = $true
+                Message = "Sheets pack installed."
+                McpDefinitions = @{
+                    excel_master = [pscustomobject]@{ command = @("excel-mcp-server") }
+                }
+            }
+        }
+        "computer" {
+            & npm install -g mcp-control
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to install the computer pack."
+            }
+            return [PSCustomObject]@{
+                Success = $true
+                Message = "Computer pack installed."
+                McpDefinitions = @{
+                    computer_control = [pscustomobject]@{ command = @("mcp-control") }
+                }
+            }
+        }
+        "social" {
+            & npm install -g playwriter
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to install the social pack."
+            }
+            return [PSCustomObject]@{
+                Success = $true
+                Message = "Social pack installed. Some workflows may still require manual browser-extension or session setup."
+                McpDefinitions = @{
+                    playwriter = [pscustomobject]@{ command = @("playwriter") }
+                }
+            }
+        }
+        default {
+            throw "Unknown capability pack: $PackName"
+        }
+    }
+}
+
+function Sync-InstalledCapabilityPacks {
+    param(
+        [string]$ConfigPath,
+        [hashtable]$PackSelections,
+        [hashtable]$InstallResults
+    )
+
+    if (-not (Test-Path $ConfigPath)) {
+        return $false
+    }
+
+    $json = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+
+    foreach ($packName in $PackSelections.Keys) {
+        $enabled = [bool]$PackSelections[$packName]
+        $installResult = $InstallResults[$packName]
+
+        switch ($packName) {
+            "docs" {
+                if ($enabled -and $installResult -and $installResult.Success) {
+                    Set-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "pdf_filler" -Definition $installResult.McpDefinitions.pdf_filler
+                    Set-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "word_document" -Definition $installResult.McpDefinitions.word_document
+                }
+                else {
+                    Remove-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "pdf_filler"
+                    Remove-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "word_document"
+                }
+            }
+            "sheets" {
+                if ($enabled -and $installResult -and $installResult.Success) {
+                    Set-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "excel_master" -Definition $installResult.McpDefinitions.excel_master
+                }
+                else {
+                    Remove-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "excel_master"
+                }
+            }
+            "computer" {
+                if ($enabled -and $installResult -and $installResult.Success) {
+                    Set-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "computer_control" -Definition $installResult.McpDefinitions.computer_control
+                }
+                else {
+                    Remove-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "computer_control"
+                }
+            }
+            "social" {
+                if ($enabled -and $installResult -and $installResult.Success) {
+                    Set-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "playwriter" -Definition $installResult.McpDefinitions.playwriter
+                }
+                else {
+                    Remove-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "playwriter"
+                }
+            }
+        }
+    }
+
+    $json | ConvertTo-Json -Depth 25 | Set-Content -Path $ConfigPath -Encoding UTF8
+    return $true
+}
+
 function Sync-OpenCodeConfigTemplate {
     param(
         [string]$TemplatePath,
@@ -390,7 +651,40 @@ Ensure-Directory -Path $playwrightProfileInput
 Ensure-Directory -Path (Split-Path -Parent $openCodeConfigPath)
 
 Write-Host ""
-Write-Host "Step 4: Personal data file" -ForegroundColor Green
+Write-Host "Step 4: Optional OpenCode capability packs" -ForegroundColor Green
+$packSelections = @{
+    browser = Read-BooleanAnswer -Prompt "Enable the browser pack (general browsing and screenshots)?" -Default $currentSettings.OpenCode.Packs.Browser
+    docs = Read-BooleanAnswer -Prompt "Enable the docs pack (PDF and Word workflows)?" -Default $currentSettings.OpenCode.Packs.Docs
+    sheets = Read-BooleanAnswer -Prompt "Enable the sheets pack (Excel and CSV workflows)?" -Default $currentSettings.OpenCode.Packs.Sheets
+    computer = Read-BooleanAnswer -Prompt "Enable the computer pack (mouse, keyboard, desktop control)?" -Default $currentSettings.OpenCode.Packs.Computer
+    social = Read-BooleanAnswer -Prompt "Enable the social pack (LinkedIn and X style workflows)?" -Default $currentSettings.OpenCode.Packs.Social
+}
+$packInstallResults = @{}
+foreach ($packName in $packSelections.Keys) {
+    if (-not [bool]$packSelections[$packName]) {
+        continue
+    }
+
+    if (-not (Read-BooleanAnswer -Prompt "Install the $packName capability pack now?" -Default $true)) {
+        continue
+    }
+
+    try {
+        $packInstallResults[$packName] = Install-CapabilityPack -PackName $packName
+        Write-Host "[Setup] $($packInstallResults[$packName].Message)" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "[Setup] Failed to install $packName pack: $($_.Exception.Message)" -ForegroundColor Yellow
+        $packInstallResults[$packName] = [PSCustomObject]@{
+            Success = $false
+            Message = $_.Exception.Message
+            McpDefinitions = @{}
+        }
+    }
+}
+
+Write-Host ""
+Write-Host "Step 5: Personal data file" -ForegroundColor Green
 $fillPersonalData = Read-BooleanAnswer -Prompt "Do you want to populate PERSONAL DATA.local.md now?" -Default $true
 
 $personalProfile = @{
@@ -440,6 +734,8 @@ $settingsObject = [ordered]@{
         botToken = $botToken
         defaultChatId = $defaultChatId
         startupChatId = $startupChatId
+        authorizedChatIds = @($defaultChatId)
+        authorizedUserIds = @()
     }
     llm = [ordered]@{
         openRouterApiKey = $openRouterApiKey
@@ -456,6 +752,13 @@ $settingsObject = [ordered]@{
         command = $opencodeCommand
         configPath = $openCodeConfigPath
         defaultModel = $currentSettings.OpenCode.DefaultModel
+        packs = [ordered]@{
+            browser = [bool]$packSelections.browser
+            docs = [bool]$packSelections.docs
+            sheets = [bool]$packSelections.sheets
+            computer = [bool]$packSelections.computer
+            social = [bool]$packSelections.social
+        }
     }
     browser = [ordered]@{
         chromeExecutable = $chromeExecutable
@@ -476,10 +779,19 @@ Write-Host "[Setup] Updated config/settings.json" -ForegroundColor Green
 if (Test-Path $opencodeExample) {
     $copied = Sync-OpenCodeConfigTemplate -TemplatePath $opencodeExample -ConfiguredPath $openCodeConfigPath
     if ($copied) {
+        Update-OpenCodeAgentPackToggles -ConfigPath $defaultOpenCodeConfigPath -PackSelections $packSelections | Out-Null
+        if ($openCodeConfigPath -ne $defaultOpenCodeConfigPath) {
+            Update-OpenCodeAgentPackToggles -ConfigPath $openCodeConfigPath -PackSelections $packSelections | Out-Null
+        }
+        Sync-InstalledCapabilityPacks -ConfigPath $defaultOpenCodeConfigPath -PackSelections $packSelections -InstallResults $packInstallResults | Out-Null
+        if ($openCodeConfigPath -ne $defaultOpenCodeConfigPath) {
+            Sync-InstalledCapabilityPacks -ConfigPath $openCodeConfigPath -PackSelections $packSelections -InstallResults $packInstallResults | Out-Null
+        }
         Write-Host "[Setup] Copied OpenCode user config template to $openCodeConfigPath" -ForegroundColor Green
         if ($openCodeConfigPath -ne $defaultOpenCodeConfigPath) {
             Write-Host "[Setup] Synced canonical OpenCode config: $defaultOpenCodeConfigPath" -ForegroundColor Green
         }
+        Write-Host "[Setup] Applied selected capability pack toggles and MCP definitions to the OpenCode config." -ForegroundColor Green
     }
 }
 
@@ -488,7 +800,7 @@ Write-Host "[Setup] Updated PERSONAL DATA.local.md" -ForegroundColor Green
 
 if (-not $SkipNetworkChecks) {
     Write-Host ""
-    Write-Host "Step 5: Connectivity checks" -ForegroundColor Green
+    Write-Host "Step 6: Connectivity checks" -ForegroundColor Green
 
     $telegramTokenOk = Test-TelegramBotToken -BotToken $botToken
     Write-Host $(if ($telegramTokenOk) { "[Check] Telegram bot token is valid." } else { "[Check] Telegram bot token validation failed." }) -ForegroundColor $(if ($telegramTokenOk) { "Green" } else { "Red" })
@@ -508,6 +820,7 @@ Write-Host "- Installed or checked OpenCode and Playwright dependencies."
 Write-Host "- Wrote config/settings.json with your local values."
 Write-Host "- Updated PERSONAL DATA.local.md with your local information."
 Write-Host "- Copied the OpenCode user config template."
+Write-Host "- Applied OpenCode capability pack toggles for the selected agents."
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Green
 Write-Host "1. Start the bot with .\RunBot.bat"

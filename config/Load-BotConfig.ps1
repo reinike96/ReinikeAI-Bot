@@ -56,6 +56,27 @@ function Get-ResolvedConfigValue {
     return $DefaultValue
 }
 
+function Get-ResolvedConfigArray {
+    param(
+        [object]$JsonConfig,
+        [string]$EnvName,
+        [string]$JsonPath,
+        [object[]]$DefaultValue = @()
+    )
+
+    $envValue = [Environment]::GetEnvironmentVariable($EnvName)
+    if (-not [string]::IsNullOrWhiteSpace($envValue)) {
+        return @($envValue -split ',' | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
+    $jsonValue = Get-ConfigNodeValue -Node $JsonConfig -Path $JsonPath
+    if ($jsonValue -is [System.Collections.IEnumerable] -and $jsonValue -isnot [string]) {
+        return @($jsonValue | ForEach-Object { "$_".Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
+    return @($DefaultValue)
+}
+
 function Import-BotSettings {
     param([string]$ProjectRoot)
 
@@ -76,12 +97,21 @@ function Import-BotSettings {
     $playwrightProfileDir = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "PLAYWRIGHT_PROFILE_DIR" -JsonPath "browser.playwrightProfileDir" -DefaultValue (Join-Path $root "profiles\playwright")
     $defaultChatId = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "TELEGRAM_DEFAULT_CHAT_ID" -JsonPath "telegram.defaultChatId" -DefaultValue ""
     $startupChatId = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "TELEGRAM_STARTUP_CHAT_ID" -JsonPath "telegram.startupChatId" -DefaultValue $defaultChatId
+    $authorizedChatIds = Get-ResolvedConfigArray -JsonConfig $jsonConfig -EnvName "TELEGRAM_AUTHORIZED_CHAT_IDS" -JsonPath "telegram.authorizedChatIds" -DefaultValue @($defaultChatId)
+    $authorizedUserIds = Get-ResolvedConfigArray -JsonConfig $jsonConfig -EnvName "TELEGRAM_AUTHORIZED_USER_IDS" -JsonPath "telegram.authorizedUserIds" -DefaultValue @()
+    $browserPackEnabled = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PACK_BROWSER" -JsonPath "opencode.packs.browser" -DefaultValue $true))
+    $docsPackEnabled = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PACK_DOCS" -JsonPath "opencode.packs.docs" -DefaultValue $false))
+    $sheetsPackEnabled = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PACK_SHEETS" -JsonPath "opencode.packs.sheets" -DefaultValue $false))
+    $computerPackEnabled = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PACK_COMPUTER" -JsonPath "opencode.packs.computer" -DefaultValue $false))
+    $socialPackEnabled = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PACK_SOCIAL" -JsonPath "opencode.packs.social" -DefaultValue $false))
 
     return [PSCustomObject]@{
         Telegram = [PSCustomObject]@{
-            BotToken      = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "TELEGRAM_BOT_TOKEN" -JsonPath "telegram.botToken" -DefaultValue ""
-            DefaultChatId = $defaultChatId
-            StartupChatId = $startupChatId
+            BotToken          = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "TELEGRAM_BOT_TOKEN" -JsonPath "telegram.botToken" -DefaultValue ""
+            DefaultChatId     = $defaultChatId
+            StartupChatId     = $startupChatId
+            AuthorizedChatIds = $authorizedChatIds
+            AuthorizedUserIds = $authorizedUserIds
         }
         LLM = [PSCustomObject]@{
             OpenRouterApiKey = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENROUTER_API_KEY" -JsonPath "llm.openRouterApiKey" -DefaultValue ""
@@ -98,6 +128,13 @@ function Import-BotSettings {
             Command        = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_COMMAND" -JsonPath "opencode.command" -DefaultValue "opencode"
             ConfigPath     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_CONFIG_PATH" -JsonPath "opencode.configPath" -DefaultValue (Join-Path $env:USERPROFILE ".config\opencode\config.json")
             DefaultModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_DEFAULT_MODEL" -JsonPath "opencode.defaultModel" -DefaultValue "opencode/MiniMax-M2.5-free"
+            Packs          = [PSCustomObject]@{
+                Browser = $browserPackEnabled
+                Docs = $docsPackEnabled
+                Sheets = $sheetsPackEnabled
+                Computer = $computerPackEnabled
+                Social = $socialPackEnabled
+            }
         }
         Browser = [PSCustomObject]@{
             ChromeExecutable   = $chromeExecutable

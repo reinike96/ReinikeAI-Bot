@@ -9,17 +9,52 @@
             "*": "allow"
         }
     },
+    "tool": {
+        "pdf_filler_*": false,
+        "word_document_*": false,
+        "excel_master_*": false,
+        "computer_control_*": false,
+        "playwriter_*": false
+    },
     "agent": {
         "build": {
             "tools": {
-                "mcp-playwright": false,
+                "playwright_browser_*": false,
+                "pdf_filler_*": false,
+                "word_document_*": false,
+                "excel_master_*": false,
+                "computer_control_*": false,
+                "playwriter_*": false
+            }
+        },
+        "browser": {
+            "tools": {
                 "playwright_browser_*": true
             }
         },
-        "browse": {
+        "docs": {
             "tools": {
-                "mcp-playwright": false,
-                "playwright_browser_*": true
+                "playwright_browser_*": false,
+                "pdf_filler_*": false,
+                "word_document_*": false
+            }
+        },
+        "sheets": {
+            "tools": {
+                "playwright_browser_*": false,
+                "excel_master_*": false
+            }
+        },
+        "computer": {
+            "tools": {
+                "playwright_browser_*": false,
+                "computer_control_*": false
+            }
+        },
+        "social": {
+            "tools": {
+                "playwright_browser_*": true,
+                "playwriter_*": false
             }
         }
     }

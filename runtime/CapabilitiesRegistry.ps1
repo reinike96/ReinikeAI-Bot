@@ -17,11 +17,39 @@ function Get-TaskCapabilityProfile {
                 'endpoint', 'variable', 'algorithm', 'loop', 'array', 'object', 'class', 'method', 'test',
                 'unittest', 'parse', 'build.*app', 'create.*app', 'make.*app'
             )
-            Agent = "coder"
+            Agent = "build"
             Model = $null
-            Label = "OpenCode Coding"
+            Label = "OpenCode Build"
             RiskLevel = "medium"
             ExpectedTimeoutSec = 1800
+            ExecutionMode = "agent"
+        },
+        @{
+            Name = "social"
+            Capability = "social"
+            Patterns = @(
+                'linkedin', 'x\.com', 'twitter', 'tweet', 'post on', 'social profile',
+                'social media', 'dm on', 'message on linkedin'
+            )
+            Agent = "social"
+            Model = $null
+            Label = "OpenCode Social"
+            RiskLevel = "medium"
+            ExpectedTimeoutSec = 1500
+            ExecutionMode = "agent"
+        },
+        @{
+            Name = "computer"
+            Capability = "computer"
+            Patterns = @(
+                'mouse', 'keyboard', 'click', 'double click', 'drag', 'window', 'desktop',
+                'application window', 'focus app', 'move cursor', 'type into app'
+            )
+            Agent = "computer"
+            Model = $null
+            Label = "OpenCode Computer"
+            RiskLevel = "high"
+            ExpectedTimeoutSec = 1200
             ExecutionMode = "agent"
         },
         @{
@@ -31,9 +59,22 @@ function Get-TaskCapabilityProfile {
                 'web', 'website', 'browser', 'navigate', 'scrape', 'extract', 'crawl',
                 'dom', 'html', 'page', 'site'
             )
-            Agent = "browse"
+            Agent = "browser"
             Model = $null
             Label = "OpenCode Browser"
+            RiskLevel = "low"
+            ExpectedTimeoutSec = 1200
+            ExecutionMode = "agent"
+        },
+        @{
+            Name = "sheets"
+            Capability = "sheet"
+            Patterns = @(
+                'excel', 'xlsx', 'xlsm', 'spreadsheet', 'worksheet', 'workbook', 'csv'
+            )
+            Agent = "sheets"
+            Model = $null
+            Label = "OpenCode Sheets"
             RiskLevel = "low"
             ExpectedTimeoutSec = 1200
             ExecutionMode = "agent"
@@ -44,12 +85,12 @@ function Get-TaskCapabilityProfile {
             Patterns = @(
                 'pdf', 'docx', 'document', 'file', 'report', 'summary'
             )
-            Agent = $null
-            Model = "opencode/MiniMax-M2.5-free"
-            Label = "OpenCode Document"
+            Agent = "docs"
+            Model = $null
+            Label = "OpenCode Docs"
             RiskLevel = "low"
-            ExpectedTimeoutSec = 900
-            ExecutionMode = "model"
+            ExpectedTimeoutSec = 1200
+            ExecutionMode = "agent"
         }
     )
 
@@ -120,10 +161,28 @@ function Get-CapabilityRiskProfile {
                 Reason = "Browser tasks are mainly read-oriented."
             }
         }
+        "sheet" {
+            return [PSCustomObject]@{
+                Level = "low"
+                Reason = "Spreadsheet tasks are structured but usually low-risk."
+            }
+        }
         "document" {
             return [PSCustomObject]@{
                 Level = "low"
                 Reason = "Document tasks are mainly extraction and summarization."
+            }
+        }
+        "computer" {
+            return [PSCustomObject]@{
+                Level = "high"
+                Reason = "Computer-control tasks can affect live applications and the desktop."
+            }
+        }
+        "social" {
+            return [PSCustomObject]@{
+                Level = "medium"
+                Reason = "Social-site automation is stateful and often more fragile."
             }
         }
         default {

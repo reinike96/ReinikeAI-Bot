@@ -2,7 +2,11 @@
   "telegram": {
     "botToken": "PASTE_YOUR_TELEGRAM_BOT_TOKEN",
     "defaultChatId": "PASTE_YOUR_NUMERIC_CHAT_ID",
-    "startupChatId": "PASTE_YOUR_NUMERIC_CHAT_ID"
+    "startupChatId": "PASTE_YOUR_NUMERIC_CHAT_ID",
+    "authorizedChatIds": [
+      "PASTE_YOUR_NUMERIC_CHAT_ID"
+    ],
+    "authorizedUserIds": []
   },
   "llm": {
     "openRouterApiKey": "PASTE_YOUR_OPENROUTER_API_KEY",
@@ -18,7 +22,14 @@
     "port": 4096,
     "command": "opencode",
     "configPath": "C:\\Users\\<YourUser>\\.config\\opencode\\config.json",
-    "defaultModel": "opencode/MiniMax-M2.5-free"
+    "defaultModel": "opencode/MiniMax-M2.5-free",
+    "packs": {
+      "browser": true,
+      "docs": false,
+      "sheets": false,
+      "computer": false,
+      "social": false
+    }
   },
   "browser": {
     "chromeExecutable": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",

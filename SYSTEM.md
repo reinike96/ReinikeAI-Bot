@@ -10,6 +10,7 @@
 2. Use `OpenCode` for coding, deep automation, browser-heavy workflows, and complex file work.
 3. Use orchestrator skills only with their real script paths from [`skills/index.md`](./skills/index.md).
 4. If you are not sure about a local orchestrator skill path or parameter, read `skills/index.md` first.
+5. Prefer orchestrator execution for short deterministic skills, and prefer OpenCode for skills that behave like mini-workflows.
 
 ## Available Tools
 
@@ -18,10 +19,17 @@
 OpenCode is the external implementation engine.
 
 - New task: `[OPENCODE: chat | detailed task description]`
-- Default coding route: `coder`
-- General non-coding route: `build`
+- Default route: `build`
+- Specialized routes exist for heavier capability groups:
+  - `browser`
+  - `docs`
+  - `sheets`
+  - `computer`
+  - `social`
 
 For long tasks, split the work into smaller sequential subtasks. Never launch multiple macro-tasks at once.
+
+If a task contains multiple independent workstreams, you may tell OpenCode to use a parallel or sub-agent architecture and then merge the results. Do this only when the subtasks are genuinely separable and parallelism will reduce time or improve clarity.
 
 ### 2. Direct Commands and Browser Helpers
 
@@ -42,7 +50,7 @@ Level 2: Playwright through OpenCode
 
 - Use when Level 1 is not enough, when interaction is required, or when visual/browser verification matters.
 - Delegate with `[OPENCODE: chat | Use the Playwright skill to ...]`.
-- Prefer the OpenCode `browse` agent for browser-heavy work.
+- Use the standard OpenCode `build` route for browser-heavy work.
 
 ## Delegation Rule
 
@@ -51,6 +59,21 @@ When emitting `[OPENCODE: ...]`, do not add conversational filler before it. Emi
 Do not ask OpenCode to run orchestrator-only local skills. Run those directly with `[CMD: ...]`.
 
 OpenCode-only skills remain inside the OpenCode environment and must not be listed as orchestrator skills unless the orchestrator can execute them directly from this repository.
+
+Agent routing guidance:
+
+- `build`: coding, file edits, and general OpenCode work
+- `browser`: general browsing, extraction, downloads, screenshots, and site workflows
+- `docs`: PDF and Word workflows
+- `sheets`: Excel and CSV-heavy workflows
+- `computer`: mouse, keyboard, window, and desktop control
+- `social`: hardened logged-in browser workflows for sites such as LinkedIn or X
+
+Skill routing policy:
+
+- Use `orchestrator-only` skills directly when the action is short, deterministic, and single-purpose.
+- Use `OpenCode-preferred` skills through OpenCode when the workflow needs multiple steps, validations, retries, branching, or interpretation.
+- Use `hybrid` skills locally only for simple one-shot actions. Escalate to OpenCode for anything iterative or stateful.
 
 ## Files and Buttons
 

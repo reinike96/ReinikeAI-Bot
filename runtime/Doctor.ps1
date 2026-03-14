@@ -29,6 +29,11 @@ function Invoke-SystemDoctor {
         Info = if (-not [string]::IsNullOrWhiteSpace($OpenRouterKey) -and $OpenRouterKey -notmatch 'PASTE_') { "Configured" } else { "Missing" }
     }
     $checks += [PSCustomObject]@{
+        Name = "Authorized chat allowlist"
+        Ok   = @($BotConfig.Telegram.AuthorizedChatIds | Where-Object { -not [string]::IsNullOrWhiteSpace("$_") -and "$_" -notmatch '^PASTE_' }).Count -gt 0
+        Info = (@($BotConfig.Telegram.AuthorizedChatIds) -join ", ")
+    }
+    $checks += [PSCustomObject]@{
         Name = "Work directory"
         Ok   = Test-Path $WorkDir
         Info = $WorkDir
@@ -50,6 +55,11 @@ function Invoke-SystemDoctor {
         Ok   = $openCodeCommandOk
         Info = $BotConfig.OpenCode.Command
     }
+    $checks += [PSCustomObject]@{
+        Name = "OpenCode bind host"
+        Ok   = $BotConfig.OpenCode.Host -eq "127.0.0.1" -or $BotConfig.OpenCode.Host -eq "localhost"
+        Info = $BotConfig.OpenCode.Host
+    }
 
     $checks += [PSCustomObject]@{
         Name = "Chrome executable"
@@ -67,9 +77,28 @@ function Invoke-SystemDoctor {
         Info = $BotConfig.Browser.PlaywrightProfileDir
     }
 
+    $packStates = @()
+    try {
+        $packStates = @(Get-CapabilityPackState -BotConfig $BotConfig -ConfigPath $BotConfig.OpenCode.ConfigPath)
+    }
+    catch {
+        $packStates = @()
+    }
+
     foreach ($check in $checks) {
         $icon = if ($check.Ok) { "OK" } else { "FAIL" }
         $lines += "- $icon $($check.Name): $($check.Info)"
+    }
+
+    if ($packStates.Count -gt 0) {
+        $lines += ""
+        $lines += "*Capability Packs*"
+        foreach ($pack in $packStates) {
+            $settingsIcon = if ($pack.EnabledInSettings) { "ON" } else { "OFF" }
+            $configIcon = if ($pack.EnabledInOpenCodeConfig) { "OK" } else { "WARN" }
+            $installedIcon = if ($pack.Installed) { "READY" } else { "MISS" }
+            $lines += "- $settingsIcon/$configIcon/$installedIcon $($pack.DisplayName): settings=$($pack.EnabledInSettings) opencode=$($pack.EnabledInOpenCodeConfig) installed=$($pack.Installed)"
+        }
     }
 
     try {
@@ -105,6 +134,8 @@ function Invoke-SystemDoctor {
     $lines += "- Run `Install.ps1` if folders are missing."
     $lines += "- Fill `config/settings.json` if any credential check failed."
     $lines += "- Start OpenCode before browser-heavy tasks if the health check is failing."
+    $lines += "- If a capability pack shows WARN, rerun `Install.ps1` and reapply the pack toggles."
+    $lines += "- If a capability pack shows MISS, rerun `Install.ps1` and choose to install that pack."
 
     return ($lines -join "`n")
 }

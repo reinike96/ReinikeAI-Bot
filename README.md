@@ -55,6 +55,29 @@ In practice, the architecture is:
 - OpenCode as the execution engine for complex tasks
 - Local PowerShell skills as direct orchestrator tools when delegation is not necessary
 
+### OpenCode agent profiles
+
+The repository now ships project-defined OpenCode agent profiles so users can keep a specialized execution layout under version control instead of manually editing OpenCode every time.
+
+- `build`: general coding and lightweight tasks
+- `browser`: browsing and page workflows
+- `docs`: PDF and Word workflows
+- `sheets`: Excel and CSV workflows
+- `computer`: mouse, keyboard, and desktop control
+- `social`: hardened social-site browsing flows such as LinkedIn or X
+
+Reference:
+
+- [`config/opencode.example.json`](./config/opencode.example.json)
+- [`config/opencode-agents.md`](./config/opencode-agents.md)
+
+The interactive installer lets users turn these capability packs on or off and writes both:
+
+- `config/settings.json`
+- `~/.config/opencode/config.json`
+
+For optional third-party packs, the installer can also ask whether each selected pack should be installed immediately and then inject the corresponding MCP server definitions into the user's OpenCode config.
+
 ## Quick Start
 
 1. Read the full setup guide in [`INSTALL.md`](./INSTALL.md).
@@ -115,6 +138,7 @@ Public-safe defaults live in:
 
 - [`config/settings.example.json`](./config/settings.example.json)
 - [`config/opencode.example.json`](./config/opencode.example.json)
+- [`config/opencode-agents.md`](./config/opencode-agents.md)
 
 Local machine configuration is created by the installer and should stay out of Git:
 

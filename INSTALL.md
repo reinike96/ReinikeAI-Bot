@@ -95,6 +95,15 @@ You can also override any of those with environment variables later.
 
 This repository includes a project-level [`opencode.json`](./opencode.json) and a user-level template at [`config/opencode.example.json`](./config/opencode.example.json).
 
+It also includes an agent profile guide at [`config/opencode-agents.md`](./config/opencode-agents.md) describing the specialized agents shipped with the project:
+
+- `build`
+- `browser`
+- `docs`
+- `sheets`
+- `computer`
+- `social`
+
 To create your user config:
 
 ```powershell
@@ -109,6 +118,7 @@ Important:
 - OpenCode merges global and project config.
 - Project `opencode.json` is safe to commit.
 - User `~/.config/opencode/config.json` should stay local.
+- The repo only ships agent structure and tool toggles. Third-party MCP servers still need to be installed locally before those capabilities become active.
 
 ## 7. Optional browser profile setup
 
@@ -133,9 +143,12 @@ This script:
 - asks for your local values directly in the terminal
 - asks whether OpenCode should be installed automatically if it is missing
 - asks whether Playwright dependencies should be installed automatically
+- asks which optional OpenCode capability packs should be enabled
+- asks, pack by pack, whether the selected capability packs should be installed immediately
 - writes `config/settings.json` for you
 - updates the local `PERSONAL DATA.local.md` file
 - copies the OpenCode user config template for you
+- applies the selected capability-pack toggles and MCP server definitions to the OpenCode config
 - runs Telegram and OpenRouter checks unless you use `-SkipNetworkChecks`
 
 If you want to skip Telegram/OpenRouter network checks during initial setup:
@@ -160,6 +173,7 @@ Check these items:
 2. The bot starts without missing-config errors.
 3. Sending `/start` to the bot produces a Telegram response.
 4. An OpenCode-backed task can complete successfully.
+5. `/doctor` shows the expected capability pack state.
 
 ## Environment variable overrides
 

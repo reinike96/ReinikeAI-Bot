@@ -136,7 +136,7 @@ function Invoke-PendingChatProcessing {
             }
 
             $turnState = Update-ConversationTurnState -TurnState $turnState -ExecutedTag $tag
-            $actionResult = Invoke-ParsedAction -Item $item -ChatId $chatId -LastUserIndex $turnState.LastUserIndex
+            $actionResult = Invoke-ParsedAction -Item $item -ChatId $chatId -LastUserIndex $turnState.LastUserIndex -UserId $chatId
             if ($actionResult.RequiresLoop) {
                 $requiresLoop = $true
             }

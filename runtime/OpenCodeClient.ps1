@@ -114,7 +114,19 @@ function Start-OpenCodeJob {
                 $lastWrite = (Get-Item $logFile).LastWriteTime.ToString("yyyy-MM-dd")
                 if ($lastWrite -ne $currentDate) { Clear-Content $logFile -ErrorAction SilentlyContinue }
             }
-            "[$currentDate $timestamp] [$type] $message" | Out-File -FilePath $logFile -Append -Encoding UTF8
+            $sanitized = $message
+            $redactionPatterns = @(
+                '(?i)\b\d{8,10}:[A-Za-z0-9_-]{20,}\b',
+                '(?i)\b(sk-or-v1|sk-[A-Za-z0-9_-]+)[A-Za-z0-9_-]*\b',
+                '(?i)(Authorization["'':=\s]+Bearer\s+)[^\s]+',
+                '(?i)(serverPassword["'':=\s]+)[^\s,;]+',
+                '(?i)(openRouterApiKey["'':=\s]+)[^\s,;]+',
+                '(?i)(apiKey["'':=\s]+)[^\s,;]+'
+            )
+            foreach ($pattern in $redactionPatterns) {
+                $sanitized = [regex]::Replace($sanitized, $pattern, '$1[REDACTED]')
+            }
+            "[$currentDate $timestamp] [$type] $sanitized" | Out-File -FilePath $logFile -Append -Encoding UTF8
         }
 
         function Write-Heartbeat {
