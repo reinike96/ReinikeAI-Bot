@@ -34,8 +34,8 @@ function Sync-OpenCodeUserConfig {
         [string]$ProjectTemplatePath
     )
 
-    $canonicalPath = Join-Path $env:USERPROFILE ".config\opencode\config.json"
-    $legacyPath = Join-Path $env:USERPROFILE ".config\opencode\opencode.json"
+    $canonicalPath = Join-Path $env:USERPROFILE ".config\opencode\opencode.json"
+    $legacyPath = Join-Path $env:USERPROFILE ".config\opencode\config.json"
     $sourcePath = $null
 
     foreach ($candidate in @($ConfiguredPath, $canonicalPath, $legacyPath, $ProjectTemplatePath)) {

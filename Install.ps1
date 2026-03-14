@@ -27,7 +27,7 @@ $settingsLocal = Join-Path $configDir "settings.json"
 $opencodeExample = Join-Path $configDir "opencode.example.json"
 $packageJsonPath = Join-Path $projectRoot "package.json"
 $personalDataPath = Join-Path $projectRoot "PERSONAL DATA.local.md"
-$defaultOpenCodeConfigPath = Join-Path $env:USERPROFILE ".config\opencode\config.json"
+$defaultOpenCodeConfigPath = Join-Path $env:USERPROFILE ".config\opencode\opencode.json"
 
 . (Join-Path $projectRoot "config\Load-BotConfig.ps1")
 . (Join-Path $projectRoot "runtime\CapabilityPacks.ps1")
@@ -330,7 +330,8 @@ function Save-JsonFile {
         [object]$Data
     )
 
-    $Data | ConvertTo-Json -Depth 10 | Set-Content -Path $Path -Encoding UTF8
+    $jsonText = $Data | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($Path, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 function Update-OpenCodeAgentPackToggles {
@@ -361,7 +362,8 @@ function Update-OpenCodeAgentPackToggles {
         }
     }
 
-    $json | ConvertTo-Json -Depth 20 | Set-Content -Path $ConfigPath -Encoding UTF8
+    $jsonText = $json | ConvertTo-Json -Depth 20
+    [System.IO.File]::WriteAllText($ConfigPath, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
     return $true
 }
 
@@ -387,14 +389,14 @@ function Install-CapabilityPack {
             if (-not $pythonCmd) {
                 throw "Python is required for the docs pack."
             }
-            $pdfRepo = Join-Path $externalMcpDir "pdf-filler-recursive-simple-mcp"
+            $pdfRepo = Join-Path $externalMcpDir "file-converter-mcp"
             $wordRepo = Join-Path $externalMcpDir "Office-Word-MCP-Server"
 
-            Ensure-GitRepository -RepositoryUrl "https://github.com/songminkyu/pdf-filler-recursive-simple-mcp.git" -TargetPath $pdfRepo
+            Ensure-GitRepository -RepositoryUrl "https://github.com/hannesrudolph/file-converter-mcp.git" -TargetPath $pdfRepo
             Push-Location $pdfRepo
             try {
-                & npm install
-                if ($LASTEXITCODE -ne 0) { throw "npm install failed for the PDF MCP." }
+                & $pythonCmd -m pip install -e .
+                if ($LASTEXITCODE -ne 0) { throw "pip install failed for the PDF/file converter MCP." }
             }
             finally {
                 Pop-Location
@@ -414,8 +416,8 @@ function Install-CapabilityPack {
                 Success = $true
                 Message = "Docs pack installed."
                 McpDefinitions = @{
-                    pdf_filler = [pscustomobject]@{ command = @("node", (Join-Path $pdfRepo "server\index.js")) }
-                    word_document = [pscustomobject]@{ command = @($pythonCmd, (Join-Path $wordRepo "word_mcp_server.py")) }
+                    file_converter = [pscustomobject]@{ type = "local"; enabled = $true; command = @($pythonCmd, (Join-Path $pdfRepo "start_mcp_server.py")) }
+                    word_document = [pscustomobject]@{ type = "local"; enabled = $true; command = @($pythonCmd, (Join-Path $wordRepo "word_mcp_server.py")) }
                 }
             }
         }
@@ -428,7 +430,7 @@ function Install-CapabilityPack {
                 Success = $true
                 Message = "Sheets pack installed."
                 McpDefinitions = @{
-                    excel_master = [pscustomobject]@{ command = @("excel-mcp-server") }
+                    excel_master = [pscustomobject]@{ type = "local"; enabled = $true; command = @("excel-mcp-server") }
                 }
             }
         }
@@ -441,7 +443,7 @@ function Install-CapabilityPack {
                 Success = $true
                 Message = "Computer pack installed."
                 McpDefinitions = @{
-                    computer_control = [pscustomobject]@{ command = @("mcp-control") }
+                    computer_control = [pscustomobject]@{ type = "local"; enabled = $true; command = @("mcp-control") }
                 }
             }
         }
@@ -454,7 +456,7 @@ function Install-CapabilityPack {
                 Success = $true
                 Message = "Social pack installed. Some workflows may still require manual browser-extension or session setup."
                 McpDefinitions = @{
-                    playwriter = [pscustomobject]@{ command = @("playwriter") }
+                    playwriter = [pscustomobject]@{ type = "local"; enabled = $true; command = @("playwriter") }
                 }
             }
         }
@@ -484,11 +486,11 @@ function Sync-InstalledCapabilityPacks {
         switch ($packName) {
             "docs" {
                 if ($enabled -and $installResult -and $installResult.Success) {
-                    Set-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "pdf_filler" -Definition $installResult.McpDefinitions.pdf_filler
+                    Set-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "file_converter" -Definition $installResult.McpDefinitions.file_converter
                     Set-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "word_document" -Definition $installResult.McpDefinitions.word_document
                 }
                 else {
-                    Remove-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "pdf_filler"
+                    Remove-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "file_converter"
                     Remove-OpenCodeMcpServerDefinition -ConfigJson $json -ServerName "word_document"
                 }
             }
@@ -519,7 +521,8 @@ function Sync-InstalledCapabilityPacks {
         }
     }
 
-    $json | ConvertTo-Json -Depth 25 | Set-Content -Path $ConfigPath -Encoding UTF8
+    $jsonText = $json | ConvertTo-Json -Depth 25
+    [System.IO.File]::WriteAllText($ConfigPath, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
     return $true
 }
 
@@ -533,11 +536,13 @@ function Sync-OpenCodeConfigTemplate {
         return $false
     }
 
-    $canonicalPath = Join-Path $env:USERPROFILE ".config\opencode\config.json"
+    $canonicalPath = Join-Path $env:USERPROFILE ".config\opencode\opencode.json"
     Ensure-Directory -Path (Split-Path -Parent $canonicalPath)
 
     Copy-Item $TemplatePath $canonicalPath -Force
-    if (-not [string]::IsNullOrWhiteSpace($ConfiguredPath) -and $ConfiguredPath -ne $canonicalPath) {
+    $compatPath = Join-Path $env:USERPROFILE ".config\opencode\config.json"
+    Copy-Item $TemplatePath $compatPath -Force
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredPath) -and $ConfiguredPath -ne $canonicalPath -and $ConfiguredPath -ne $compatPath) {
         Ensure-Directory -Path (Split-Path -Parent $ConfiguredPath)
         Copy-Item $TemplatePath $ConfiguredPath -Force
     }

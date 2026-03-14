@@ -6,14 +6,14 @@ function Get-CapabilityPackRegistry {
             Description = "PDF and Word workflows for OpenCode."
             Agent = "docs"
             SettingKey = "docs"
-            ToolFlags = @("pdf_filler_*", "word_document_*")
+            ToolFlags = @("file_converter_*", "word_document_*")
             SuggestedProjects = @(
-                "pdf-filler-recursive-simple-mcp",
+                "file-converter-mcp",
                 "Office-Word-MCP-Server"
             )
             InstallCheckType = "path"
             InstallCheckTarget = @(
-                "external\\mcp\\pdf-filler-recursive-simple-mcp\\server\\index.js",
+                "external\\mcp\\file-converter-mcp\\start_mcp_server.py",
                 "external\\mcp\\Office-Word-MCP-Server\\word_mcp_server.py"
             )
         },

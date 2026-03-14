@@ -21,7 +21,7 @@
     "host": "127.0.0.1",
     "port": 4096,
     "command": "opencode",
-    "configPath": "C:\\Users\\<YourUser>\\.config\\opencode\\config.json",
+    "configPath": "C:\\Users\\<YourUser>\\.config\\opencode\\opencode.json",
     "defaultModel": "opencode/MiniMax-M2.5-free",
     "packs": {
       "browser": true,

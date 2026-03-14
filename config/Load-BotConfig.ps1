@@ -126,7 +126,7 @@ function Import-BotSettings {
             Host           = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_HOST" -JsonPath "opencode.host" -DefaultValue "127.0.0.1"
             Port           = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_PORT" -JsonPath "opencode.port" -DefaultValue 4096)
             Command        = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_COMMAND" -JsonPath "opencode.command" -DefaultValue "opencode"
-            ConfigPath     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_CONFIG_PATH" -JsonPath "opencode.configPath" -DefaultValue (Join-Path $env:USERPROFILE ".config\opencode\config.json")
+            ConfigPath     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_CONFIG_PATH" -JsonPath "opencode.configPath" -DefaultValue (Join-Path $env:USERPROFILE ".config\opencode\opencode.json")
             DefaultModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_DEFAULT_MODEL" -JsonPath "opencode.defaultModel" -DefaultValue "opencode/MiniMax-M2.5-free"
             Packs          = [PSCustomObject]@{
                 Browser = $browserPackEnabled

@@ -9,8 +9,8 @@
       "*": "allow"
     }
   },
-  "tool": {
-    "pdf_filler_*": false,
+  "tools": {
+    "file_converter_*": false,
     "word_document_*": false,
     "excel_master_*": false,
     "computer_control_*": false,
@@ -20,7 +20,7 @@
     "build": {
       "tools": {
         "playwright_browser_*": false,
-        "pdf_filler_*": false,
+        "file_converter_*": false,
         "word_document_*": false,
         "excel_master_*": false,
         "computer_control_*": false,
@@ -35,7 +35,7 @@
     "docs": {
       "tools": {
         "playwright_browser_*": false,
-        "pdf_filler_*": false,
+        "file_converter_*": false,
         "word_document_*": false
       }
     },

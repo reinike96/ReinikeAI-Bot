@@ -18,7 +18,7 @@ This project ships a project-level OpenCode agent layout so users can keep speci
 - `docs`
   - use for PDF and Word work
   - intended MCP/skill set:
-    - PDF form filling
+    - file conversion and PDF extraction
     - OCR / PDF extraction
     - Word document generation or editing
 
@@ -54,7 +54,7 @@ This split is intentional:
 ## Suggested mapping for third-party capability packs
 
 - `docs`
-  - PDF toolkit / form filler MCP
+  - file-converter MCP
   - Word MCP
 
 - `sheets`
