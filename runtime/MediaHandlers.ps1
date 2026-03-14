@@ -44,8 +44,12 @@ function Send-DetectedFiles {
 
     $sentFiles = @()
     $workDirArchives = Join-Path $workDir "archives"
+    $configuredArchives = $null
+    if ($script:botConfig -and $script:botConfig.Paths -and $script:botConfig.Paths.ArchivesDir) {
+        $configuredArchives = $script:botConfig.Paths.ArchivesDir
+    }
     $tempReinike = "$env:TEMP\ReinikeBot"
-    $allowedRoots = @($workDirArchives, $tempReinike)
+    $allowedRoots = @($configuredArchives, $workDirArchives, $tempReinike) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
     $candidatePaths = New-Object System.Collections.Generic.List[string]
     $absolutePattern = '([a-zA-Z]:\\[^:<>|"?\r\n]+\.(png|jpg|jpeg|pdf|docx|txt|zip|xlsx|csv))'
@@ -66,11 +70,21 @@ function Send-DetectedFiles {
         }
 
         if (Test-Path $path) {
+            try {
+                $path = [System.IO.Path]::GetFullPath($path)
+            }
+            catch {}
             if ($sentFiles -contains $path) { continue }
 
             $isAllowed = $false
             foreach ($root in $allowedRoots) {
-                if (-not [string]::IsNullOrWhiteSpace($root) -and $path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $normalizedRoot = $root
+                try {
+                    $normalizedRoot = [System.IO.Path]::GetFullPath($root)
+                }
+                catch {}
+
+                if (-not [string]::IsNullOrWhiteSpace($normalizedRoot) -and $path.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
                     $isAllowed = $true
                     break
                 }

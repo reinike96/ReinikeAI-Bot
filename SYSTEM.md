@@ -20,7 +20,9 @@ OpenCode is the external implementation engine.
 
 - New task: `[OPENCODE: chat | detailed task description]`
 - Default route: `build`
-- Specialized routes exist for heavier capability groups:
+- The orchestrator should not try to pick specialized agents by keyword.
+- Send OpenCode tasks through `build` by default.
+- If the work clearly needs a specialized project agent, tell OpenCode it may use one internally as a sub-agent:
   - `browser`
   - `docs`
   - `sheets`
@@ -50,7 +52,7 @@ Level 2: Playwright through OpenCode
 
 - Use when Level 1 is not enough, when interaction is required, or when visual/browser verification matters.
 - Delegate with `[OPENCODE: chat | Use the Playwright skill to ...]`.
-- Use the standard OpenCode `build` route for browser-heavy work.
+- Use the standard OpenCode `build` route for browser-heavy work and let OpenCode decide whether it needs a browser-focused sub-agent internally.
 
 ## Delegation Rule
 
@@ -60,9 +62,9 @@ Do not ask OpenCode to run orchestrator-only local skills. Run those directly wi
 
 OpenCode-only skills remain inside the OpenCode environment and must not be listed as orchestrator skills unless the orchestrator can execute them directly from this repository.
 
-Agent routing guidance:
+Agent guidance inside OpenCode:
 
-- `build`: coding, file edits, and general OpenCode work
+- `build`: default route for all delegated tasks
 - `browser`: general browsing, extraction, downloads, screenshots, and site workflows
 - `docs`: PDF and Word workflows
 - `sheets`: Excel and CSV-heavy workflows

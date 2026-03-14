@@ -16,6 +16,29 @@ function Get-StructuredPayloadText {
     return $null
 }
 
+function Get-OpenCodeTaskFromActionPayload {
+    param([object]$Action)
+
+    if ($null -eq $Action) {
+        return ""
+    }
+
+    if ($Action.PSObject.Properties["task"] -and -not [string]::IsNullOrWhiteSpace("$($Action.task)")) {
+        return "$($Action.task)"
+    }
+
+    if ($Action.PSObject.Properties["command"] -and -not [string]::IsNullOrWhiteSpace("$($Action.command)")) {
+        $commandValue = "$($Action.command)".Trim()
+        if ($commandValue -match '^(?is)(?:chat|build|browser|docs|sheets|computer|social)\s*\|\s*(.+)$') {
+            return $Matches[1].Trim()
+        }
+
+        return $commandValue
+    }
+
+    return ""
+}
+
 function Convert-StructuredResponseToActions {
     param([string]$Response)
 
@@ -61,7 +84,7 @@ function Convert-StructuredResponseToActions {
             "CMD" { $item["Command"] = "$($action.command)" }
             "OPENCODE" {
                 $item["Route"] = if ($action.PSObject.Properties["route"]) { "$($action.route)" } else { "chat" }
-                $item["Task"] = "$($action.task)"
+                $item["Task"] = Get-OpenCodeTaskFromActionPayload -Action $action
             }
             "PW_CONTENT" { $item["Url"] = "$($action.url)" }
             "PW_SCREENSHOT" { $item["Url"] = "$($action.url)" }
@@ -165,7 +188,7 @@ function Convert-InlineStructuredActions {
                     "CMD" { $item["Command"] = "$($action.command)" }
                     "OPENCODE" {
                         $item["Route"] = if ($action.PSObject.Properties["route"]) { "$($action.route)" } else { "chat" }
-                        $item["Task"] = "$($action.task)"
+                        $item["Task"] = Get-OpenCodeTaskFromActionPayload -Action $action
                     }
                     "PW_CONTENT" { $item["Url"] = "$($action.url)" }
                     "PW_SCREENSHOT" { $item["Url"] = "$($action.url)" }

@@ -11,6 +11,7 @@ function Invoke-ParsedAction {
         PendingButtons = $null
         Blocked = $false
         BlockedTag = $null
+        SuppressFinalReply = $false
     }
 
     if ($Item.ActionType -eq "OPENCODE") {
@@ -29,6 +30,7 @@ function Invoke-ParsedAction {
         }
 
         $plan = New-OpenCodeExecutionPlan -Task $taskDescription -EnableMCPs $mcps
+        $delegatedTaskDescription = if ($plan.PSObject.Properties["DelegatedTask"] -and -not [string]::IsNullOrWhiteSpace("$($plan.DelegatedTask)")) { "$($plan.DelegatedTask)" } else { $taskDescription }
 
         $emojiHourglass = [char]::ConvertFromUtf32(0x23F3)
         $capabilityRisk = Get-CapabilityRiskProfile -Capability $plan.Capability
@@ -38,6 +40,7 @@ function Invoke-ParsedAction {
             $confirmationId = [guid]::NewGuid().ToString("N")
             Add-PendingConfirmation -ConfirmationId $confirmationId -Payload @{
                 TaskDescription = $taskDescription
+                DelegatedTaskDescription = $delegatedTaskDescription
                 ChatId = $ChatId
                 Agent = $plan.Agent
                 EnableMCPs = @($plan.EnableMCPs)
@@ -57,10 +60,10 @@ function Invoke-ParsedAction {
         }
 
         if ($plan.Agent) {
-            $newJob = Start-OpenCodeJob -TaskDescription $taskDescription -ChatId $ChatId -EnableMCPs $plan.EnableMCPs -Agent $plan.Agent -TimeoutSec $plan.ExpectedTimeoutSec
+            $newJob = Start-OpenCodeJob -TaskDescription $delegatedTaskDescription -ChatId $ChatId -EnableMCPs $plan.EnableMCPs -Agent $plan.Agent -TimeoutSec $plan.ExpectedTimeoutSec
         }
         else {
-            $newJob = Start-OpenCodeJob -TaskDescription $taskDescription -ChatId $ChatId -EnableMCPs $plan.EnableMCPs -Model $plan.Model -TimeoutSec $plan.ExpectedTimeoutSec
+            $newJob = Start-OpenCodeJob -TaskDescription $delegatedTaskDescription -ChatId $ChatId -EnableMCPs $plan.EnableMCPs -Model $plan.Model -TimeoutSec $plan.ExpectedTimeoutSec
         }
         if (-not [string]::IsNullOrWhiteSpace($plan.Label)) {
             $newJob.Label = $plan.Label
@@ -71,6 +74,7 @@ function Invoke-ParsedAction {
         Update-TelegramStatus -job $newJob -text $msgStatus
         Add-ActiveJob -JobRecord $newJob
         Write-JobsFile
+        $result.SuppressFinalReply = $true
         return [PSCustomObject]$result
     }
 

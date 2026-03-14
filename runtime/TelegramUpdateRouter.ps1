@@ -175,7 +175,8 @@ function Invoke-TelegramCallbackRoute {
                 Send-TelegramText -chatId $chatId -text "This confirmation belongs to a different user."
                 return
             }
-            $newJob = Start-OpenCodeJob -TaskDescription $pending.TaskDescription -ChatId $chatId -EnableMCPs $pending.EnableMCPs -Agent $pending.Agent -TimeoutSec $pending.TimeoutSec
+            $jobTaskDescription = if ($pending.DelegatedTaskDescription) { $pending.DelegatedTaskDescription } else { $pending.TaskDescription }
+            $newJob = Start-OpenCodeJob -TaskDescription $jobTaskDescription -ChatId $chatId -EnableMCPs $pending.EnableMCPs -Agent $pending.Agent -TimeoutSec $pending.TimeoutSec
             if (-not [string]::IsNullOrWhiteSpace($pending.Label)) { $newJob.Label = $pending.Label }
             $newJob.Capability = $pending.Capability
             $newJob.CapabilityRisk = $pending.CapabilityRisk
@@ -364,14 +365,14 @@ function Invoke-TelegramUpdateRouter {
         $offset = $update.update_id + 1
 
         if ($null -ne $update.callback_query) {
-            Invoke-TelegramCallbackRoute -CallbackQuery $update.callback_query -BotConfig $BotConfig -ApiUrl $ApiUrl -Offset $offset
+            [void](Invoke-TelegramCallbackRoute -CallbackQuery $update.callback_query -BotConfig $BotConfig -ApiUrl $ApiUrl -Offset $offset)
             continue
         }
 
         if ($null -ne $update.message) {
-            Invoke-TelegramMessageRoute -Message $update.message -BotConfig $BotConfig -ApiUrl $ApiUrl -Token $Token -OpenRouterKey $OpenRouterKey -WorkDir $WorkDir
+            [void](Invoke-TelegramMessageRoute -Message $update.message -BotConfig $BotConfig -ApiUrl $ApiUrl -Token $Token -OpenRouterKey $OpenRouterKey -WorkDir $WorkDir)
         }
     }
 
-    return $offset
+    return [int]$offset
 }

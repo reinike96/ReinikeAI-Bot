@@ -57,6 +57,7 @@ function Initialize-ConversationTurn {
         PendingButtons = $null
         BlockedTags = @()
         CurrentTurnTags = @()
+        SuppressFinalReply = $false
     }
 }
 
@@ -66,7 +67,8 @@ function Update-ConversationTurnState {
         [string]$TextChunk = "",
         [object]$PendingButtons = $null,
         [string]$BlockedTag = $null,
-        [string]$ExecutedTag = $null
+        [string]$ExecutedTag = $null,
+        [bool]$SuppressFinalReply = $false
     )
 
     if (-not [string]::IsNullOrWhiteSpace($TextChunk)) {
@@ -80,6 +82,9 @@ function Update-ConversationTurnState {
     }
     if (-not [string]::IsNullOrWhiteSpace($ExecutedTag)) {
         $TurnState.CurrentTurnTags += $ExecutedTag
+    }
+    if ($SuppressFinalReply) {
+        $TurnState.SuppressFinalReply = $true
     }
 
     return $TurnState
@@ -110,7 +115,7 @@ function Finalize-ConversationTurn {
         }
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($respText) -and -not $RequiresLoop) {
+    if (-not [string]::IsNullOrWhiteSpace($respText) -and -not $RequiresLoop -and -not $TurnState.SuppressFinalReply) {
         if ($null -ne $TurnState.PendingButtons) {
             if ($TurnState.PendingButtons.ContainsKey("buttons")) {
                 Send-TelegramText -chatId $ChatId -text $respText -buttons $TurnState.PendingButtons.buttons

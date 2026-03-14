@@ -143,6 +143,9 @@ function Invoke-PendingChatProcessing {
             if ($null -ne $actionResult.PendingButtons) {
                 $turnState = Update-ConversationTurnState -TurnState $turnState -PendingButtons $actionResult.PendingButtons
             }
+            if ($actionResult.SuppressFinalReply) {
+                $turnState = Update-ConversationTurnState -TurnState $turnState -SuppressFinalReply $true
+            }
         }
 
         Finalize-ConversationTurn -ChatId $chatId -AiResponse $aiResp -TurnState $turnState -WorkDir $WorkDir -RequiresLoop $requiresLoop

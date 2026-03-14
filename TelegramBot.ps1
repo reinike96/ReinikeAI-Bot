@@ -392,7 +392,7 @@ while ($true) {
         # Telegram polling
         $timeout = if ((Get-PendingChats).Count -gt 0) { 0 } else { 3 }
         $updates = Invoke-RestMethod -Uri "$apiUrl/getUpdates?offset=$offset&timeout=$timeout" -Method Get -TimeoutSec 45
-        $offset = Invoke-TelegramUpdateRouter -UpdatesResponse $updates -CurrentOffset $offset -BotConfig $botConfig -ApiUrl $apiUrl -Token $token -OpenRouterKey $openRouterKey -WorkDir $workDir
+        $offset = [int](Invoke-TelegramUpdateRouter -UpdatesResponse $updates -CurrentOffset $offset -BotConfig $botConfig -ApiUrl $apiUrl -Token $token -OpenRouterKey $openRouterKey -WorkDir $workDir)
         
         Invoke-PendingChatProcessing -FullSystemPrompt $fullSys -ApiUrl $apiUrl -WorkDir $workDir
     }
