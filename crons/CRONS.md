@@ -1,70 +1,66 @@
-# Sistema de Cron Jobs
+# Scheduled Task System
 
-Este directorio contiene scripts de tareas programadas (cron jobs) para Windows utilizando **Windows Task Scheduler**.
+This directory contains Windows Task Scheduler scripts used by ReinikeAI.
 
-## Estructura
+## Structure
 
-```
+```text
 crons/
-├── CRONS.md                    # Este archivo
-├── registrar-tarea.ps1         # Script para registrar tareas
-├── ejemplos/                   # Scripts de ejemplo
+├── CRONS.md
+├── registrar-tarea.ps1
+├── ejemplos/
 │   └── ejemplo-basico/
 │       └── ejemplo-basico.ps1
-└── logs/                       # Logs de las tareas
+└── logs/
 ```
 
-## Agregar un nuevo Cron
+## Adding a new scheduled script
 
-### 1. Crear el script
+1. Create a script inside `crons/`, for example `crons/my-task/my-task.ps1`.
+2. Register it with the scheduler helper or the `Cron_Tasks` skill.
 
-Crea tu script en una carpeta dentro de `crons/`. Ejemplo: `mi-cron/mi-cron.ps1`
+Example script:
 
 ```powershell
-# mi-cron.ps1
 param(
     [string]$LogPath = "$PSScriptRoot\..\logs"
 )
 
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-Write-Host "[$timestamp] Ejecutando mi-cron..."
+Write-Host "[$timestamp] Running scheduled task..."
 
-# Tu lógica aquí
+# Your logic here
 
-Write-Host "[$timestamp] Finalizado"
+Write-Host "[$timestamp] Finished"
 ```
 
-### 2. Registrar la tarea
-
-Ejecuta el script de registro desde PowerShell (como Administrador):
+## Register a task manually
 
 ```powershell
-.\registrar-tarea.ps1 -TaskName "MiCron" -ScriptPath "C:\ruta\a\mi-cron.ps1" -Schedule "Daily" -Time "09:00"
+.\registrar-tarea.ps1 -TaskName "MyTask" -ScriptPath "C:\path\to\my-task.ps1" -Schedule "Daily" -Time "09:00"
 ```
 
-### 3. Parámetros de Schedule
+## Supported schedules
 
-| Valor | Descripción |
-|-------|-------------|
-| Once | Una vez |
-| Daily | Diario |
-| Weekly | Semanal |
-| Monthly | Mensual |
-| AtStartup | Al iniciar Windows |
-| AtLogOn | Al iniciar sesión |
+- `Once`
+- `Daily`
+- `Weekly`
+- `Monthly`
+- `AtStartup`
+- `AtLogOn`
 
-### 4. Ver tareas programadas
+## List scheduled tasks
 
 ```powershell
-Get-ScheduledTask | Where-Object {$_.TaskPath -like "*Reinike*"}
+Get-ScheduledTask | Where-Object { $_.TaskPath -like "*Reinike*" }
 ```
 
-### 5. Eliminar una tarea
+## Remove a scheduled task
 
 ```powershell
-Unregister-ScheduledTask -TaskName "MiCron" -Confirm:$false
+Unregister-ScheduledTask -TaskName "MyTask" -Confirm:$false
 ```
 
 ## Logs
 
-Los logs de las tareas se almacenan en: `crons/logs/`
+Task logs can be written to `crons/logs/` if your scheduled scripts choose to use that folder.

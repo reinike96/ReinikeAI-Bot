@@ -12,3 +12,6 @@ PERSONAL DATA.local.md
 profiles/
 !.gitkeep
 external/
+__pycache__/
+*.pyc
+*.backup

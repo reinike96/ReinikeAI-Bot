@@ -56,6 +56,12 @@ function Get-SkillRoutingProfile {
             Reason = "CSV inspection is a short deterministic local analysis helper."
         },
         @{
+            SkillName = "Cron Tasks"
+            Pattern = '(?i)skills\\Cron_Tasks\\(Register-ScheduledAutomation|List-ScheduledAutomations|Start-ScheduledAutomation|Remove-ScheduledAutomation)\.ps1'
+            Classification = "hybrid"
+            Reason = "Task Scheduler operations are deterministic, but the automation script itself may need OpenCode first."
+        },
+        @{
             SkillName = "Playwright CLI"
             Pattern = '(?i)skills\\Playwright\\playwright-nav\.ps1'
             Classification = "hybrid"

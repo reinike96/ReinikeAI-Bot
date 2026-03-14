@@ -74,6 +74,7 @@ Skill routing policy:
 - Use `orchestrator-only` skills directly when the action is short, deterministic, and single-purpose.
 - Use `OpenCode-preferred` skills through OpenCode when the workflow needs multiple steps, validations, retries, branching, or interpretation.
 - Use `hybrid` skills locally only for simple one-shot actions. Escalate to OpenCode for anything iterative or stateful.
+- For scheduled automations, OpenCode may author the script first, and then the orchestrator may register it through the Cron Tasks skill.
 
 ## Files and Buttons
 

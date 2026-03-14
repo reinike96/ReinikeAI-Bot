@@ -69,6 +69,17 @@ When adding a new skill, classify it before documenting it here.
 - Script: `.\skills\Csv_Tools\Inspect-Csv.ps1`
 - Usage: `powershell -File ".\skills\Csv_Tools\Inspect-Csv.ps1" -Path ".\archives\data.csv"`
 
+## Cron Tasks
+
+- Purpose: register, list, run, and remove Windows Task Scheduler automations
+- Classification: `hybrid`
+- Scripts:
+  - `.\skills\Cron_Tasks\Register-ScheduledAutomation.ps1`
+  - `.\skills\Cron_Tasks\List-ScheduledAutomations.ps1`
+  - `.\skills\Cron_Tasks\Start-ScheduledAutomation.ps1`
+  - `.\skills\Cron_Tasks\Remove-ScheduledAutomation.ps1`
+- Routing rule: use directly for deterministic scheduler operations, but ask OpenCode to create the automation script first when the workflow itself is complex
+
 ## Playwright CLI
 
 - Purpose: browser navigation, screenshots, downloads, and text extraction

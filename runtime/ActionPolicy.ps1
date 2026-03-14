@@ -22,6 +22,8 @@ function Get-CommandRiskProfile {
         @{ Pattern = '(?i)send-outlook-email\.ps1'; Reason = "Sends email from Outlook"; Level = "confirm" }
         @{ Pattern = '(?i)\b(invoke-webrequest|curl|wget)\b'; Reason = "Downloads or posts data over the network"; Level = "confirm" }
         @{ Pattern = '(?i)\b(start-process)\b'; Reason = "Launches a new process"; Level = "confirm" }
+        @{ Pattern = '(?i)skills\\Cron_Tasks\\Register-ScheduledAutomation\.ps1'; Reason = "Creates or updates a scheduled task"; Level = "confirm" }
+        @{ Pattern = '(?i)skills\\Cron_Tasks\\Remove-ScheduledAutomation\.ps1'; Reason = "Removes a scheduled task"; Level = "confirm" }
     )
 
     foreach ($rule in $patterns) {
