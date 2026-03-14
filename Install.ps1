@@ -86,6 +86,26 @@ function Ensure-Directory {
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
 }
 
+function Test-UsablePathString {
+    param([string]$PathValue)
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $false
+    }
+
+    if ($PathValue -match '<|>|YOUR_USER|PASTE_') {
+        return $false
+    }
+
+    try {
+        [void][System.IO.Path]::GetFullPath($PathValue)
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
 function Get-PythonCommandName {
     if (Test-CommandAvailable -Name "python") { return "python" }
     if (Test-CommandAvailable -Name "py") { return "py" }
@@ -652,7 +672,7 @@ $playwrightProfileInput = $playwrightProfileDir
 Write-Host "[Setup] Playwright profile directory: $playwrightProfileInput" -ForegroundColor Green
 $downloadsDir = $archivesDir
 Write-Host "[Setup] Download/output directory: $downloadsDir" -ForegroundColor Green
-$openCodeConfigPath = if (-not [string]::IsNullOrWhiteSpace($currentSettings.OpenCode.ConfigPath) -and $currentSettings.OpenCode.ConfigPath -notmatch 'YOUR_USER') { $currentSettings.OpenCode.ConfigPath } else { $defaultOpenCodeConfigPath }
+$openCodeConfigPath = if (Test-UsablePathString -PathValue $currentSettings.OpenCode.ConfigPath) { $currentSettings.OpenCode.ConfigPath } else { $defaultOpenCodeConfigPath }
 if ([System.IO.Path]::GetFileName($openCodeConfigPath) -ieq "opencode.json") {
     $openCodeConfigPath = Join-Path (Split-Path -Parent $openCodeConfigPath) "config.json"
 }
