@@ -22,6 +22,11 @@ function Get-OpenCodeTaskEnvelope {
 $routingLine
 Only if a specialized project agent is clearly needed for part of the work, choose and use it internally as a sub-agent. Available specialized agents: browser, docs, sheets, computer, social.
 Do not switch agents unless there is a concrete need.
+If you cannot continue reliably without live Windows desktop control through the local Windows-Use skill, stop and return this exact block and nothing more:
+[WINDOWS_USE_FALLBACK_REQUIRED]
+Task: <single-line bounded Windows-Use task for the local orchestrator>
+Reason: <brief reason>
+Do not claim you used the local Windows-Use skill yourself.
 
 Task:
 $normalizedTask
@@ -103,8 +108,21 @@ function New-OpenCodeExecutionPlan {
     $timeoutSec = 1800
     $extraInstructions = ""
 
+    $outlookPattern = '(?i)\b(outlook|correo|correos|email|emails|mail|inbox|bandeja|unread|no le[ií]dos?|send email|send mail|reply|reply to|responder)\b'
+    $explicitWebmailPattern = '(?i)\b(gmail|outlook web|outlook.com|hotmail|webmail|browser|website|site|pagina web|sitio web)\b'
+
+    if ($normalizedTask -match $outlookPattern -and $normalizedTask -notmatch $explicitWebmailPattern) {
+        $capability = "outlook"
+        $extraInstructions = @"
+This is an Outlook desktop workflow, not a general browser task.
+Prefer the local repository Outlook scripts under .\skills\Outlook\ and Microsoft Outlook COM automation over Playwright or website navigation.
+If the user asked to check or review emails, start with .\skills\Outlook\check-outlook-emails.ps1 or .\skills\Outlook\search-outlook-emails.ps1 as appropriate.
+Use browser or webmail only if the user explicitly asked for Gmail, Outlook Web, outlook.com, hotmail, or another website.
+"@.Trim()
+    }
+
     $browserPattern = '(google|browser|navega|navegar|busca|buscar|search|screenshot|captura|capturas|pantallazo|playwright|web)'
-    if ($normalizedTask -match $browserPattern) {
+    if ($capability -ne "outlook" -and $normalizedTask -match $browserPattern) {
         $capability = "browser"
         $extraInstructions = @"
 For browser automation, keep using the build agent unless a specialized sub-agent is strictly necessary.

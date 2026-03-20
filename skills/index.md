@@ -33,6 +33,14 @@ When adding a new skill, classify it before documenting it here.
   - `.\skills\Outlook\delete-emails.ps1`
   - `.\skills\Outlook\list-folders.ps1`
 
+## Windows-Use
+
+- Purpose: bounded Windows GUI automation with the Python `windows-use` agent
+- Classification: `hybrid`
+- Restricted: prefer explicit, bounded desktop tasks and require confirmation before execution
+- Script: `.\skills\Windows_Use\Invoke-WindowsUse.ps1`
+- Usage: `powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "Open Notepad and type hello"`
+
 ## Telegram Sender
 
 - Purpose: send Telegram messages and files

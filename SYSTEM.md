@@ -40,6 +40,13 @@ If a task contains multiple independent workstreams, you may tell OpenCode to us
 - Lightweight page extraction: `[PW_CONTENT: url]`
 - Lightweight page screenshot: `[PW_SCREENSHOT: url]`
 - View top processes: `[CMD: Get-Process | sort CPU -Desc | select -First 5]`
+- Windows GUI automation: `[CMD: powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "Open Notepad and type hello"]`
+
+### 2.5. Desktop App Protocol
+
+- If the user asks to read, search, send, classify, or delete Outlook emails from the local desktop app, prefer the local Outlook skill through OpenCode, not browser automation.
+- Treat requests such as "check my emails", "review Outlook", "search my inbox", "read unread emails", "send an email", "correo", "emails", "bandeja", and "Outlook" as Outlook-desktop workflows unless the user explicitly says Gmail, Outlook Web, browser, website, or webmail.
+- For Outlook-desktop workflows, delegate to OpenCode with instructions to use the repository Outlook scripts under `.\skills\Outlook\` and COM automation instead of Playwright or website navigation.
 
 ### 3. Browser Escalation Protocol
 
@@ -53,6 +60,29 @@ Level 2: Playwright through OpenCode
 - Use when Level 1 is not enough, when interaction is required, or when visual/browser verification matters.
 - Delegate with `[OPENCODE: chat | Use the Playwright skill to ...]`.
 - Use the standard OpenCode `build` route for browser-heavy work and let OpenCode decide whether it needs a browser-focused sub-agent internally.
+- Do not use browser escalation for Outlook-desktop mailbox tasks unless the user explicitly asked for webmail.
+
+### 4. Desktop Control Protocol
+
+- Use the local Windows-Use skill for explicit, bounded desktop GUI control when the task is about the Windows desktop itself rather than code execution or browser workflows.
+- Prefer `[CMD: powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "..."]` for tasks such as opening an app, clicking a button, typing into a desktop window, or switching windows.
+- If the user explicitly asks to control the PC, click something, type into an app, use a native desktop window, handle a file dialog, or operate a local GUI, prefer the Windows-Use skill directly instead of delegating to browser automation.
+- Because Windows-Use can control the live desktop, keep the task narrow and expect a confirmation flow before execution.
+- If the task is broader, risky, or mixed with coding/file work, prefer OpenCode with the `computer` route instead of chaining multiple Windows-Use commands.
+
+### 5. OpenCode Escalation To Windows-Use
+
+- OpenCode cannot run the local Windows-Use skill itself.
+- If OpenCode determines that the next step requires live desktop control through the local Windows-Use skill, it must stop and return this exact marker block:
+
+```text
+[WINDOWS_USE_FALLBACK_REQUIRED]
+Task: <single-line bounded Windows-Use task for the local orchestrator>
+Reason: <brief reason>
+```
+
+- When this marker appears, the orchestrator should offer a confirmation button and, if approved, run the local Windows-Use skill with that task.
+- Use this escalation when browser automation is blocked by anti-bot flows, native dialogs, desktop-only apps, or other live GUI constraints.
 
 ## Delegation Rule
 

@@ -92,6 +92,39 @@ function Get-TaskCheckpointRoot {
     return $root
 }
 
+function Initialize-OpenCodeSessionDiagnostics {
+    param(
+        [object]$BotConfig,
+        [string]$ChatId,
+        [string]$TaskText
+    )
+
+    $archivesDir = if ($BotConfig -and $BotConfig.Paths -and $BotConfig.Paths.ArchivesDir) { $BotConfig.Paths.ArchivesDir } else { Join-Path $PWD "archives" }
+    New-Item -ItemType Directory -Force -Path $archivesDir | Out-Null
+
+    $diagnosticPath = Join-Path $archivesDir "opencode-session-diagnostics.md"
+    $startedAt = (Get-Date).ToString("o")
+    $safeChatId = if ([string]::IsNullOrWhiteSpace($ChatId)) { "(none)" } else { $ChatId }
+    $safeTask = if ([string]::IsNullOrWhiteSpace($TaskText)) { "(empty task)" } else { $TaskText.Trim() }
+
+    $initialContent = @"
+# OpenCode Session Diagnostics
+
+- startedAt: $startedAt
+- chatId: $safeChatId
+- task: $safeTask
+
+## Notes
+
+- This file is overwritten at the start of each OpenCode session.
+- OpenCode should append errors, retries, blockers, and fallback decisions here while it works.
+- The orchestrator may append session metadata and raw event snapshots for debugging.
+"@.Trim() + "`n"
+
+    Set-Content -Path $diagnosticPath -Value $initialContent -Encoding UTF8
+    return $diagnosticPath
+}
+
 function Read-TaskCheckpoint {
     param(
         [string]$CheckpointPath
@@ -643,10 +676,11 @@ function Start-OpenCodeJob {
     }
     [void](Start-OpenCodeServerIfNeeded -BotConfig $botConfig)
     $checkpointInfo = Resolve-TaskCheckpoint -BotConfig $botConfig -ChatId $ChatId -TaskText $TaskDescription
+    $sessionDiagnosticsPath = Initialize-OpenCodeSessionDiagnostics -BotConfig $botConfig -ChatId $ChatId -TaskText $TaskDescription
     Update-TaskCheckpointState -CheckpointPath $checkpointInfo.Path -TaskText $TaskDescription -Status "running" -LastAction "Task delegated to OpenCode"
     $checkpointPrompt = Get-CheckpointStateForPrompt -CheckpointData $checkpointInfo.Data
     $jobScript = {
-        param($taskDescription, $workDir, $archivesDir, $jobId, $enableMCPs, $modelStr, $agentStr, $timeoutSeconds, $openCodeHost, $openCodePort, $openCodePassword, $checkpointPath, $checkpointPrompt)
+        param($taskDescription, $workDir, $archivesDir, $jobId, $enableMCPs, $modelStr, $agentStr, $timeoutSeconds, $openCodeHost, $openCodePort, $openCodePassword, $checkpointPath, $checkpointPrompt, $sessionDiagnosticsPath)
         Add-Type -AssemblyName System.Net.Http
         function Write-DailyLog {
             param([string]$message, [string]$type = "INFO")
@@ -670,6 +704,18 @@ function Start-OpenCodeJob {
                 $sanitized = [regex]::Replace($sanitized, $pattern, '$1[REDACTED]')
             }
             "[$currentDate $timestamp] [$type] $sanitized" | Out-File -FilePath $logFile -Append -Encoding UTF8
+        }
+
+        function Append-SessionDiagnostics {
+            param([string]$Title, [string]$Body)
+
+            if ([string]::IsNullOrWhiteSpace($sessionDiagnosticsPath)) {
+                return
+            }
+
+            $header = "## $Title`n"
+            $content = if ([string]::IsNullOrWhiteSpace($Body)) { "(empty)" } else { $Body.Trim() }
+            Add-Content -Path $sessionDiagnosticsPath -Value ($header + $content + "`n") -Encoding UTF8
         }
 
         function Write-Heartbeat {
@@ -724,6 +770,13 @@ function Start-OpenCodeJob {
                 return "[ERROR_OPENCODE] Could not create the session (empty ID)."
             }
             Write-DailyLog -message "Session created: $sessionId" -type "OPENCODE"
+            $sessionMetadata = @(
+                "- sessionId: $sessionId",
+                "- agent: $(if ([string]::IsNullOrWhiteSpace($agentStr)) { "(default)" } else { $agentStr })",
+                "- model: $(if ([string]::IsNullOrWhiteSpace($modelStr)) { "(default)" } else { $modelStr })",
+                "- timeoutSeconds: $timeoutSeconds"
+            ) -join "`n"
+            Append-SessionDiagnostics -Title "Session Metadata" -Body $sessionMetadata
             Write-Heartbeat -jobId $jobId -status "session_ready"
 
             $taskText = @"
@@ -783,26 +836,46 @@ $checkpointPrompt
                 $resultText = ($textParts | ForEach-Object { $_.text }) -join "`n"
             }
 
+            try {
+                $events = Invoke-RestMethod -Uri "$openCodeUrl/session/$sessionId/event" -Headers $headers -TimeoutSec 10 -ErrorAction Stop
+                if ($null -ne $events) {
+                    $eventsJson = $events | ConvertTo-Json -Depth 8
+                    $eventsBody = @(
+                        '```json',
+                        $eventsJson,
+                        '```'
+                    ) -join "`n"
+                    Append-SessionDiagnostics -Title "Raw Session Events" -Body $eventsBody
+                }
+            }
+            catch {
+                Append-SessionDiagnostics -Title "Event Capture Warning" -Body "Could not fetch /session/$sessionId/event after execution: $($_.Exception.Message)"
+            }
+
             if ($resultText -match '\[CANNOT_COMPLETE:\s*(.+?)\]') {
                 $reason = $matches[1]
                 Write-DailyLog -message "OpenCode cannot complete task: $reason" -type "WARN"
+                Append-SessionDiagnostics -Title "Completion Error" -Body $reason
                 return "[ERROR_OPENCODE] The model reported it cannot complete this task: $reason"
             }
 
             if (-not [string]::IsNullOrWhiteSpace($resultText)) {
                 $preview = $resultText.Substring(0, [Math]::Min(180, $resultText.Length)).Replace("`r", " ").Replace("`n", " ")
                 Write-DailyLog -message "OpenCode response OK: len=$($resultText.Length) preview='$preview'" -type "OPENCODE"
+                Append-SessionDiagnostics -Title "Final Response Preview" -Body $preview
                 Write-Heartbeat -jobId $jobId -status "completed"
                 return $resultText
             }
             else {
                 $rawDebug = $responseObj | ConvertTo-Json -Depth 10 -Compress
                 Write-DailyLog -message "OpenCode returned an empty response. Raw: $rawDebug" -type "WARN"
+                Append-SessionDiagnostics -Title "Empty Response" -Body $rawDebug
                 return "[ERROR_OPENCODE] Empty response"
             }
         }
         catch {
             Write-DailyLog -message "Error in OpenCode: $_" -type "ERROR"
+            Append-SessionDiagnostics -Title "Unhandled Orchestrator Error" -Body "$($_.Exception.Message)"
             return "[ERROR_OPENCODE] $($_.Exception.Message)"
         }
         finally {
@@ -812,7 +885,7 @@ $checkpointPrompt
     }
 
     $jobId = [Guid]::NewGuid().ToString()
-    $job = Start-Job -ScriptBlock $jobScript -ArgumentList $TaskDescription, $workDir, $archivesDir, $jobId, $EnableMCPs, $Model, $Agent, $TimeoutSec, $botConfig.OpenCode.Host, $botConfig.OpenCode.Port, $botConfig.OpenCode.ServerPassword, $checkpointInfo.Path, $checkpointPrompt
+    $job = Start-Job -ScriptBlock $jobScript -ArgumentList $TaskDescription, $workDir, $archivesDir, $jobId, $EnableMCPs, $Model, $Agent, $TimeoutSec, $botConfig.OpenCode.Host, $botConfig.OpenCode.Port, $botConfig.OpenCode.ServerPassword, $checkpointInfo.Path, $checkpointPrompt, $sessionDiagnosticsPath
     $labelSuffix = if ($EnableMCPs.Count -gt 0) { " (MCP: $($EnableMCPs -join ','))" } else { "" }
     if ($Agent) { $labelSuffix += " [Agent: $Agent]" }
     return @{
@@ -829,5 +902,6 @@ $checkpointPrompt
         TimeoutSec   = $TimeoutSec
         CheckpointPath = $checkpointInfo.Path
         CheckpointReason = $checkpointInfo.Reason
+        SessionDiagnosticsPath = $sessionDiagnosticsPath
     }
 }

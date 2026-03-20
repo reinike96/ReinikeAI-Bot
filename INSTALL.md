@@ -51,12 +51,21 @@ pip install playwright playwright-stealth
 python -m playwright install
 ```
 
+If you want the optional Windows-Use desktop automation skill, also install:
+
+```powershell
+pip install windows-use
+```
+
+`Install.ps1` can now ask whether you want to enable Windows-Use, prompt for its Python/provider/model settings, and install the Python package for you when Python is available.
+
 If you use `Install.ps1`, it now attempts this automatically:
 
 - installs `opencode` globally if missing and `npm` is available
 - installs local Node dependencies from `package.json`
 - validates that the Playwright Node package is available
 - attempts to install the optional Python Playwright fallback when `python` and `pip` are available
+- can optionally install the Windows-Use Python package and write its local config
 
 ## 4. Create your Telegram bot
 
@@ -191,6 +200,14 @@ You can use environment variables instead of storing secrets in `config/settings
 - `CHROME_EXECUTABLE`
 - `CHROME_PROFILE_DIR`
 - `PLAYWRIGHT_PROFILE_DIR`
+- `WINDOWS_USE_ENABLED`
+- `WINDOWS_USE_PYTHON_COMMAND`
+- `WINDOWS_USE_PROVIDER`
+- `WINDOWS_USE_MODEL`
+- `WINDOWS_USE_BROWSER`
+- `WINDOWS_USE_MAX_STEPS`
+- `WINDOWS_USE_USE_VISION`
+- `WINDOWS_USE_EXPERIMENTAL`
 
 ## Notes
 

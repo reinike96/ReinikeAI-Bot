@@ -22,7 +22,7 @@
     "port": 4096,
     "command": "opencode",
     "configPath": "C:\\Users\\<YourUser>\\.config\\opencode\\opencode.json",
-    "defaultModel": "opencode/MiniMax-M2.5-free",
+    "defaultModel": "opencode/MiMo-V2-Pro-Free",
     "packs": {
       "browser": true,
       "docs": false,
@@ -37,6 +37,16 @@
     "playwrightProfileDir": ".\\profiles\\playwright",
     "locale": "en-US",
     "timezone": "UTC"
+  },
+  "windowsUse": {
+    "enabled": false,
+    "pythonCommand": "python",
+    "provider": "openrouter",
+    "model": "google/gemini-3.1-flash-lite-preview",
+    "browser": "edge",
+    "maxSteps": 30,
+    "useVision": false,
+    "experimental": false
   },
   "paths": {
     "downloadsDir": ".\\archives",

@@ -144,7 +144,9 @@ function Invoke-TelegramCallbackRoute {
 
             Send-TelegramText -chatId $chatId -text "Running approved command:`n``$($pending.Command)``"
             $cmdResult = Run-PCAction -actionStr $pending.Command -chatId $chatId
-            Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM - APPROVED CMD RESULT]:`n$cmdResult`n`nAnalyze the result above and reply to the user."
+            $numFilesSent = Send-DetectedFiles -chatId $chatId -text $cmdResult
+            $fileNotice = if ($numFilesSent -gt 0) { "`n`n[SYSTEM]: $numFilesSent file(s) were detected and automatically sent to the user." } else { "" }
+            Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM - APPROVED CMD RESULT]:`n$cmdResult$fileNotice`n`nAnalyze the result above and reply to the user."
             Add-PendingChat -ChatId $chatId
         }
         else {

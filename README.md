@@ -21,6 +21,7 @@ It is designed as an OpenCode-powered alternative to OpenClawd: instead of repla
 - Telegram-first control surface for real machine orchestration
 - OpenCode delegation for coding, browsing, and multi-step tasks
 - Local PowerShell skills for search, messaging, Outlook, and browser automation
+- Optional Windows-Use desktop control skill for bounded GUI automation
 - Structured action parsing with validation, guards, confirmations, and diagnostics
 - Public-release-safe configuration model with local secrets kept out of Git
 
@@ -127,6 +128,7 @@ Examples:
 - Outlook helpers
 - Telegram sender
 - Local Playwright wrapper
+- Windows-Use desktop automation
 
 OpenCode-side skills are separate from the local orchestrator registry and should only be treated as local skills if the orchestrator can execute them directly from this repository.
 

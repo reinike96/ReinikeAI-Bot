@@ -1,3 +1,99 @@
+function Get-WindowsUseEscalationRequest {
+    param([string]$ResultText)
+
+    if ([string]::IsNullOrWhiteSpace($ResultText)) {
+        return $null
+    }
+
+    if ($ResultText -notmatch '(?s)\[WINDOWS_USE_FALLBACK_REQUIRED\]\s*Task:\s*(?<task>[^\r\n]+)\s*Reason:\s*(?<reason>[^\r\n]+)') {
+        return $null
+    }
+
+    $taskText = $Matches['task'].Trim()
+    $reasonText = $Matches['reason'].Trim()
+    if ([string]::IsNullOrWhiteSpace($taskText)) {
+        return $null
+    }
+
+    return [PSCustomObject]@{
+        Task = $taskText
+        Reason = $reasonText
+    }
+}
+
+function Offer-WindowsUseEscalation {
+    param(
+        [object]$JobRecord,
+        [string]$TaskText,
+        [string]$ReasonText = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TaskText)) {
+        return $false
+    }
+
+    if (-not (Get-Command Test-WindowsUseFallbackAvailable -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+    if (-not (Test-WindowsUseFallbackAvailable)) {
+        return $false
+    }
+
+    $windowsUseWrapper = Join-Path $workDir "skills\Windows_Use\Invoke-WindowsUse.ps1"
+    if (-not (Test-Path $windowsUseWrapper)) {
+        return $false
+    }
+
+    $quotedWrapper = if (Get-Command Convert-ToPowerShellSingleQuotedLiteral -ErrorAction SilentlyContinue) {
+        Convert-ToPowerShellSingleQuotedLiteral -Value $windowsUseWrapper
+    }
+    else {
+        "'" + $windowsUseWrapper.Replace("'", "''") + "'"
+    }
+    $quotedTask = if (Get-Command Convert-ToPowerShellSingleQuotedLiteral -ErrorAction SilentlyContinue) {
+        Convert-ToPowerShellSingleQuotedLiteral -Value $TaskText
+    }
+    else {
+        "'" + $TaskText.Replace("'", "''") + "'"
+    }
+
+    $cmd = "powershell -File $quotedWrapper -Task $quotedTask"
+    $confirmationId = [guid]::NewGuid().ToString("N")
+    Add-PendingConfirmation -ConfirmationId $confirmationId -Payload @{
+        Command    = $cmd
+        ChatId     = $JobRecord.ChatId
+        UserId     = ""
+        UserScoped = $false
+        CreatedAt  = Get-Date
+    }
+
+    $buttons = New-ConfirmationButtons -ConfirmData "confirm_cmd:$confirmationId" -CancelData "cancel_cmd:$confirmationId"
+    $safeReason = if ([string]::IsNullOrWhiteSpace($ReasonText)) { "OpenCode reported that local live desktop control is required." } else { $ReasonText.Trim() }
+    if ($safeReason.Length -gt 400) {
+        $safeReason = $safeReason.Substring(0, 400) + "..."
+    }
+
+    $message = @"
+*OpenCode requested Windows-Use escalation.*
+
+Original task:
+``$($JobRecord.Task)``
+
+Reason:
+``$safeReason``
+
+Proposed Windows-Use task:
+``$TaskText``
+
+Approve if you want the orchestrator to run this through the local Windows desktop.
+"@.Trim()
+
+    Send-TelegramText -chatId $JobRecord.ChatId -text $message -buttons $buttons
+    Add-ChatMemory -chatId $JobRecord.ChatId -role "user" -content "[SYSTEM]: OpenCode requested a Windows-Use escalation for task '$($JobRecord.Task)'. Reason: $safeReason Proposed Windows-Use task: $TaskText"
+    Write-DailyLog -message "Windows-Use escalation offered for job $($JobRecord.Job.Id). Reason='$safeReason' task='$TaskText'" -type "WARN"
+    return $true
+}
+
 function Get-StuckJobs {
     param(
         [array]$ActiveJobs,
@@ -102,10 +198,22 @@ function Complete-ActiveJobs {
         Write-DailyLog -message "Job $($j.Job.Id) result captured: len=$($subRes.Length) chars" -type "JOB"
 
         if ($j.CheckpointPath) {
-            $checkpointStatus = if ($subRes -match '^\[ERROR_') { "failed" } else { "completed" }
-            $checkpointAction = if ($checkpointStatus -eq "completed") { "Task completed" } else { "Task finished with error" }
+            $checkpointStatus = if ($subRes -match '\[WINDOWS_USE_FALLBACK_REQUIRED\]') {
+                "needs_desktop_control"
+            }
+            elseif ($subRes -match '^\[ERROR_') {
+                "failed"
+            }
+            else {
+                "completed"
+            }
+            $checkpointAction = switch ($checkpointStatus) {
+                "completed" { "Task completed" }
+                "needs_desktop_control" { "Task paused pending Windows-Use escalation" }
+                default { "Task finished with error" }
+            }
             try {
-                Update-TaskCheckpointState -CheckpointPath $j.CheckpointPath -TaskText $j.Task -Status $checkpointStatus -ResultText $subRes -LastAction $checkpointAction -LastError $(if ($checkpointStatus -eq "failed") { $subRes } else { "" })
+                Update-TaskCheckpointState -CheckpointPath $j.CheckpointPath -TaskText $j.Task -Status $checkpointStatus -ResultText $subRes -LastAction $checkpointAction -LastError $(if ($checkpointStatus -eq "failed") { $subRes } elseif ($checkpointStatus -eq "needs_desktop_control") { "OpenCode requested Windows-Use escalation." } else { "" })
             }
             catch {
                 Write-DailyLog -message "Checkpoint update failed for job $($j.Job.Id): $_" -type "WARN"
@@ -135,6 +243,16 @@ function Complete-ActiveJobs {
 
                     Remove-Job -Job $j.Job -Force -ErrorAction SilentlyContinue
                     Remove-ActiveJobById -JobId $j.Job.Id
+                    continue
+                }
+            }
+
+            $windowsUseEscalation = Get-WindowsUseEscalationRequest -ResultText $subRes
+            if ($j.Type -eq "OpenCode" -and $null -ne $windowsUseEscalation) {
+                $offered = Offer-WindowsUseEscalation -JobRecord $j -TaskText $windowsUseEscalation.Task -ReasonText $windowsUseEscalation.Reason
+                if ($offered) {
+                    Remove-ActiveJobById -JobId $j.Job.Id
+                    Write-JobsFile
                     continue
                 }
             }

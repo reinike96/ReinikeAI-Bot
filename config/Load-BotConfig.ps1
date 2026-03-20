@@ -127,7 +127,7 @@ function Import-BotSettings {
             Port           = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_PORT" -JsonPath "opencode.port" -DefaultValue 4096)
             Command        = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_COMMAND" -JsonPath "opencode.command" -DefaultValue "opencode"
             ConfigPath     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_CONFIG_PATH" -JsonPath "opencode.configPath" -DefaultValue (Join-Path $env:USERPROFILE ".config\opencode\opencode.json")
-            DefaultModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_DEFAULT_MODEL" -JsonPath "opencode.defaultModel" -DefaultValue "opencode/MiniMax-M2.5-free"
+            DefaultModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_DEFAULT_MODEL" -JsonPath "opencode.defaultModel" -DefaultValue "opencode/MiMo-V2-Pro-Free"
             Packs          = [PSCustomObject]@{
                 Browser = $browserPackEnabled
                 Docs = $docsPackEnabled
@@ -142,6 +142,16 @@ function Import-BotSettings {
             PlaywrightProfileDir = $playwrightProfileDir
             Locale             = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_LOCALE" -JsonPath "browser.locale" -DefaultValue "en-US"
             Timezone           = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_TIMEZONE" -JsonPath "browser.timezone" -DefaultValue "UTC"
+        }
+        WindowsUse = [PSCustomObject]@{
+            Enabled       = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_ENABLED" -JsonPath "windowsUse.enabled" -DefaultValue $false))
+            PythonCommand = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_PYTHON_COMMAND" -JsonPath "windowsUse.pythonCommand" -DefaultValue "python"
+            Provider      = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_PROVIDER" -JsonPath "windowsUse.provider" -DefaultValue "openrouter"
+            Model         = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_MODEL" -JsonPath "windowsUse.model" -DefaultValue (Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PRIMARY_MODEL" -JsonPath "llm.primaryModel" -DefaultValue "google/gemini-3.1-flash-lite-preview")
+            Browser       = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_BROWSER" -JsonPath "windowsUse.browser" -DefaultValue "edge"
+            MaxSteps      = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_MAX_STEPS" -JsonPath "windowsUse.maxSteps" -DefaultValue 30)
+            UseVision     = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_USE_VISION" -JsonPath "windowsUse.useVision" -DefaultValue $false))
+            Experimental  = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_EXPERIMENTAL" -JsonPath "windowsUse.experimental" -DefaultValue $false))
         }
         Paths = [PSCustomObject]@{
             WorkDir          = $root
