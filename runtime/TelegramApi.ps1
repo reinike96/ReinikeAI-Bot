@@ -183,6 +183,8 @@ function Set-TelegramCommands {
         @{ command = "status"; description = "Show active tasks" },
         @{ command = "doctor"; description = "Run a local diagnostics check" },
         @{ command = "screenshot"; description = "Take an instant screenshot" },
+        @{ command = "stopcmd"; description = "Stop running local desktop commands" },
+        @{ command = "stopall"; description = "Stop all local automation and OpenCode" },
         @{ command = "stopopencode"; description = "Stop the OpenCode server and jobs" },
         @{ command = "restart"; description = "Restart the bot" },
         @{ command = "thinking"; description = "Change reasoning level (example: /thinking high)" }

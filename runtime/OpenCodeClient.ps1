@@ -746,7 +746,8 @@ function Start-OpenCodeJob {
             $sessionBytes = [System.Text.Encoding]::UTF8.GetBytes(($sessionBody | ConvertTo-Json -Compress))
 
             try {
-                $sessionResp = Invoke-RestMethod -Uri "$openCodeUrl/session" -Method Post -Headers $headers -Body $sessionBytes -TimeoutSec 30
+                $sessionCreateTimeout = [Math]::Max(60, [Math]::Min([int]$maxTimeout, 120))
+                $sessionResp = Invoke-RestMethod -Uri "$openCodeUrl/session" -Method Post -Headers $headers -Body $sessionBytes -TimeoutSec $sessionCreateTimeout
                 $sessionId = $sessionResp.id
             }
             catch {

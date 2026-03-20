@@ -115,9 +115,9 @@ function Import-BotSettings {
         }
         LLM = [PSCustomObject]@{
             OpenRouterApiKey = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENROUTER_API_KEY" -JsonPath "llm.openRouterApiKey" -DefaultValue ""
-            PrimaryModel     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PRIMARY_MODEL" -JsonPath "llm.primaryModel" -DefaultValue "google/gemini-3.1-flash-lite-preview"
+            PrimaryModel     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PRIMARY_MODEL" -JsonPath "llm.primaryModel" -DefaultValue "xiaomi/mimo-v2-omni"
             SecondaryModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_SECONDARY_MODEL" -JsonPath "llm.secondaryModel" -DefaultValue "qwen/qwen3.5-27b"
-            ReasoningEffort  = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_REASONING_EFFORT" -JsonPath "llm.reasoningEffort" -DefaultValue "low"
+            ReasoningEffort  = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_REASONING_EFFORT" -JsonPath "llm.reasoningEffort" -DefaultValue "medium"
             ResponseLanguage = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_RESPONSE_LANGUAGE" -JsonPath "llm.responseLanguage" -DefaultValue "English"
         }
         OpenCode = [PSCustomObject]@{
@@ -147,11 +147,12 @@ function Import-BotSettings {
             Enabled       = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_ENABLED" -JsonPath "windowsUse.enabled" -DefaultValue $false))
             PythonCommand = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_PYTHON_COMMAND" -JsonPath "windowsUse.pythonCommand" -DefaultValue "python"
             Provider      = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_PROVIDER" -JsonPath "windowsUse.provider" -DefaultValue "openrouter"
-            Model         = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_MODEL" -JsonPath "windowsUse.model" -DefaultValue (Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PRIMARY_MODEL" -JsonPath "llm.primaryModel" -DefaultValue "google/gemini-3.1-flash-lite-preview")
+            Model         = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_MODEL" -JsonPath "windowsUse.model" -DefaultValue "z-ai/glm-5-turbo"
+            ReasoningEffort = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_REASONING_EFFORT" -JsonPath "windowsUse.reasoningEffort" -DefaultValue "low"
             Browser       = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_BROWSER" -JsonPath "windowsUse.browser" -DefaultValue "edge"
             MaxSteps      = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_MAX_STEPS" -JsonPath "windowsUse.maxSteps" -DefaultValue 30)
             UseVision     = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_USE_VISION" -JsonPath "windowsUse.useVision" -DefaultValue $false))
-            Experimental  = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_EXPERIMENTAL" -JsonPath "windowsUse.experimental" -DefaultValue $false))
+            Experimental  = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_EXPERIMENTAL" -JsonPath "windowsUse.experimental" -DefaultValue $true))
         }
         Paths = [PSCustomObject]@{
             WorkDir          = $root

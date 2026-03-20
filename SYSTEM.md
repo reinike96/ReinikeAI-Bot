@@ -68,6 +68,9 @@ Level 2: Playwright through OpenCode
 - Prefer `[CMD: powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "..."]` for tasks such as opening an app, clicking a button, typing into a desktop window, or switching windows.
 - If the user explicitly asks to control the PC, click something, type into an app, use a native desktop window, handle a file dialog, or operate a local GUI, prefer the Windows-Use skill directly instead of delegating to browser automation.
 - Because Windows-Use can control the live desktop, keep the task narrow and expect a confirmation flow before execution.
+- Do not create custom Telegram approval buttons for Windows-Use or other sensitive `CMD` actions. Emit the `CMD` directly and let the orchestrator generate the only valid confirmation button.
+- Prefer one complete Windows-Use task per user request. Do not split a desktop workflow into multiple sequential Windows-Use commands unless the first attempt fails, the task is genuinely unsafe to run as one block, or the user explicitly asked for step-by-step execution.
+- When the task includes text entry, instruct Windows-Use to preserve the text exactly and prefer exact paste/input behavior over approximate character-by-character typing when possible.
 - If the task is broader, risky, or mixed with coding/file work, prefer OpenCode with the `computer` route instead of chaining multiple Windows-Use commands.
 
 ### 5. OpenCode Escalation To Windows-Use

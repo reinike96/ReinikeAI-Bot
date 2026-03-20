@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import importlib
 import json
 import os
@@ -19,6 +20,89 @@ PROVIDER_MAP = {
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def install_mistralai_compat_shim() -> None:
+    """Patch newer mistralai layouts so windows-use can import optional Mistral support.
+
+    windows-use imports all providers at package import time, including its Mistral
+    provider, even when the active provider is OpenRouter/OpenAI/etc. Some newer
+    mistralai distributions expose `Mistral` and `models` under `mistralai.client`
+    instead of the top-level `mistralai` package. This shim restores the import
+    surface that windows-use expects without changing the configured provider.
+    """
+    try:
+        mistralai_pkg = importlib.import_module("mistralai")
+    except Exception:
+        return
+
+    if hasattr(mistralai_pkg, "Mistral") and "mistralai.models" in sys.modules:
+        return
+
+    try:
+        client_module = importlib.import_module("mistralai.client")
+        models_module = importlib.import_module("mistralai.client.models")
+    except Exception:
+        return
+
+    compat_class = getattr(client_module, "Mistral", None)
+    if compat_class is not None and not hasattr(mistralai_pkg, "Mistral"):
+        setattr(mistralai_pkg, "Mistral", compat_class)
+
+    if "mistralai.models" not in sys.modules:
+        sys.modules["mistralai.models"] = models_module
+    if not hasattr(mistralai_pkg, "models"):
+        setattr(mistralai_pkg, "models", models_module)
+
+
+def patch_windows_use_registry() -> None:
+    """Await async tools inside windows-use's sync execution path.
+
+    windows-use 0.7.65 exposes async tool functions but its sync Registry.execute()
+    calls them without awaiting, which returns coroutine objects and causes the
+    agent to fail after every tool call. Monkey-patch the sync path to await when
+    needed while preserving the original ToolResult contract.
+    """
+    from windows_use.agent.registry.service import Registry
+    from windows_use.agent.registry.views import ToolResult
+
+    if getattr(Registry.execute, "__name__", "") == "_execute_with_async_support":
+        return
+
+    def _execute_with_async_support(self, tool_name: str, tool_params: dict, desktop=None) -> ToolResult:
+        tool = self.get_tool(tool_name)
+        if not tool:
+            return ToolResult(is_success=False, error=f"Tool '{tool_name}' not found.")
+
+        errors = tool.validate_params(tool_params)
+        if errors:
+            error_msg = "\n".join(errors)
+            return ToolResult(is_success=False, error=f"Tool '{tool_name}' validation failed:\n{error_msg}")
+
+        invoke_kwargs = ({"desktop": desktop} | tool_params)
+        try:
+            if asyncio.iscoroutinefunction(getattr(tool, "function", None)):
+                try:
+                    content = asyncio.run(tool.ainvoke(**invoke_kwargs))
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    try:
+                        asyncio.set_event_loop(loop)
+                        content = loop.run_until_complete(tool.ainvoke(**invoke_kwargs))
+                    finally:
+                        asyncio.set_event_loop(None)
+                        loop.close()
+            else:
+                content = tool.invoke(**invoke_kwargs)
+        except Exception as error:
+            error_msg = str(error)
+            return ToolResult(is_success=False, error=f"Tool '{tool_name}' execution failed:\n{error_msg}")
+
+        if content is not None and not isinstance(content, str):
+            content = str(content)
+        return ToolResult(is_success=True, content=content)
+
+    Registry.execute = _execute_with_async_support
 
 
 def write_jsonl(log_path: str | None, payload: dict) -> None:
@@ -50,11 +134,33 @@ def summarize_event(event_type: str, data: object) -> str:
     return f"{event_type} {str(data).strip().replace(chr(10), ' ')[:180]}"
 
 
+def task_likely_requires_desktop_actions(task: str) -> bool:
+    action_markers = (
+        "open ",
+        "launch ",
+        "click ",
+        "type ",
+        "write ",
+        "switch ",
+        "press ",
+        "scroll ",
+        "drag ",
+        "calculator",
+        "notepad",
+        "outlook",
+        "browser",
+        "window",
+    )
+    lowered = task.strip().lower()
+    return any(marker in lowered for marker in action_markers)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a bounded Windows-Use task.")
     parser.add_argument("--task", required=True)
     parser.add_argument("--provider", default="openrouter")
     parser.add_argument("--model", required=True)
+    parser.add_argument("--reasoning-effort", default="")
     parser.add_argument("--browser", default="edge")
     parser.add_argument("--max-steps", type=int, default=30)
     parser.add_argument("--mode", default="normal")
@@ -65,12 +171,15 @@ def main() -> int:
     args = parser.parse_args()
 
     os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
+    install_mistralai_compat_shim()
 
     try:
         from windows_use.agent import Agent, Browser
     except Exception as exc:
         print(f"[WINDOWS_USE_ERROR] windows-use is not installed or failed to import: {exc}", file=sys.stderr)
         return 2
+
+    patch_windows_use_registry()
 
     provider_key = args.provider.strip().lower()
     if provider_key not in PROVIDER_MAP:
@@ -85,8 +194,13 @@ def main() -> int:
         print(f"[WINDOWS_USE_ERROR] Could not load provider '{args.provider}': {exc}", file=sys.stderr)
         return 2
 
+    provider_kwargs = {}
+    reasoning_effort = args.reasoning_effort.strip().lower()
+    if provider_key == "openrouter" and reasoning_effort and reasoning_effort != "none":
+        provider_kwargs["extra_body"] = {"reasoning": {"effort": reasoning_effort}}
+
     try:
-        llm = provider_class(model=args.model)
+        llm = provider_class(model=args.model, **provider_kwargs)
     except Exception as exc:
         print(f"[WINDOWS_USE_ERROR] Could not initialize provider '{args.provider}' with model '{args.model}': {exc}", file=sys.stderr)
         return 2
@@ -97,10 +211,22 @@ def main() -> int:
         print(f"[WINDOWS_USE_ERROR] Unsupported browser: {args.browser}", file=sys.stderr)
         return 2
 
+    event_stats = {
+        "events": 0,
+        "tool_calls": 0,
+        "non_done_tool_calls": 0,
+    }
+
     def on_event(event) -> None:
         event_type_obj = getattr(event, "type", None)
         event_type = getattr(event_type_obj, "value", str(event_type_obj))
         data = getattr(event, "data", {})
+        event_stats["events"] += 1
+        if event_type.lower() == "tool_call":
+            event_stats["tool_calls"] += 1
+            tool_name = str(data.get("tool_name", ""))
+            if tool_name != "done_tool":
+                event_stats["non_done_tool_calls"] += 1
         payload = {
             "timestamp": utc_now(),
             "type": event_type,
@@ -138,6 +264,23 @@ def main() -> int:
     final_text = getattr(result, "content", None)
     if final_text is None:
         final_text = str(result)
+
+    if task_likely_requires_desktop_actions(args.task) and event_stats["non_done_tool_calls"] == 0:
+        error_text = "Model reported task completion without invoking any desktop tool actions."
+        write_jsonl(
+            args.log_file or None,
+            {
+                "timestamp": utc_now(),
+                "type": "RUNNER_ERROR",
+                "data": {
+                    "error": error_text,
+                    "event_count": event_stats["events"],
+                    "tool_calls": event_stats["tool_calls"],
+                },
+            },
+        )
+        print(f"[WINDOWS_USE_ERROR] {error_text}", file=sys.stderr)
+        return 1
 
     write_jsonl(
         args.log_file or None,

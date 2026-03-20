@@ -15,3 +15,4 @@ external/
 __pycache__/
 *.pyc
 *.backup
+skills/Playwright/launch_warmup_manual.ps1

@@ -13,7 +13,7 @@ function Get-CommandRiskProfile {
     $patterns = @(
         @{ Pattern = '(?i)\b(npm|pip|pip3|winget|choco|scoop|brew)\s+(install|uninstall|upgrade|update)\b'; Reason = "Installs or changes software packages"; Level = "block" }
         @{ Pattern = '(?i)\b(invoke-expression|iex)\b'; Reason = "Executes dynamic script content"; Level = "block" }
-        @{ Pattern = '(?i)\b(remove-item|del|erase|rmdir|rd)\b'; Reason = "Deletes files or directories"; Level = "confirm" }
+        @{ Pattern = '(?i)\b(remove-item|erase|rmdir)\b|(?:^|[;&|]\s*|\s)del(?:\s+/[pqafs]\b|\s+[/\\A-Za-z0-9_.:-])|(?:^|[;&|]\s*|\s)rd(?:\s+/[sq]\b|\s+[/\\A-Za-z0-9_.:-])'; Reason = "Deletes files or directories"; Level = "confirm" }
         @{ Pattern = '(?i)\b(stop-process|taskkill|kill|shutdown|restart-computer|stop-computer|logoff)\b'; Reason = "Stops processes or restarts the system"; Level = "confirm" }
         @{ Pattern = '(?i)\b(format-volume|clear-disk|diskpart)\b'; Reason = "Touches disk state"; Level = "block" }
         @{ Pattern = '(?i)\b(set-content|add-content|out-file|move-item|rename-item|copy-item)\b'; Reason = "Modifies files"; Level = "confirm" }
@@ -51,7 +51,7 @@ function New-ConfirmationButtons {
     )
 
     return @(
-        [PSCustomObject]@{ text = "Approve"; callback_data = $ConfirmData },
-        [PSCustomObject]@{ text = "Cancel"; callback_data = $CancelData }
+        [PSCustomObject]@{ text = "✅ Aprobar"; callback_data = $ConfirmData },
+        [PSCustomObject]@{ text = "❌ Cancelar"; callback_data = $CancelData }
     )
 }

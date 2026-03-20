@@ -10,9 +10,9 @@
   },
   "llm": {
     "openRouterApiKey": "PASTE_YOUR_OPENROUTER_API_KEY",
-    "primaryModel": "google/gemini-3.1-flash-lite-preview",
+    "primaryModel": "xiaomi/mimo-v2-omni",
     "secondaryModel": "qwen/qwen3.5-27b",
-    "reasoningEffort": "low",
+    "reasoningEffort": "medium",
     "responseLanguage": "English"
   },
   "opencode": {
@@ -42,11 +42,12 @@
     "enabled": false,
     "pythonCommand": "python",
     "provider": "openrouter",
-    "model": "google/gemini-3.1-flash-lite-preview",
+    "model": "z-ai/glm-5-turbo",
+    "reasoningEffort": "low",
     "browser": "edge",
     "maxSteps": 30,
     "useVision": false,
-    "experimental": false
+    "experimental": true
   },
   "paths": {
     "downloadsDir": ".\\archives",

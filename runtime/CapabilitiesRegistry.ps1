@@ -117,6 +117,8 @@ function New-OpenCodeExecutionPlan {
 This is an Outlook desktop workflow, not a general browser task.
 Prefer the local repository Outlook scripts under .\skills\Outlook\ and Microsoft Outlook COM automation over Playwright or website navigation.
 If the user asked to check or review emails, start with .\skills\Outlook\check-outlook-emails.ps1 or .\skills\Outlook\search-outlook-emails.ps1 as appropriate.
+For "today"/"hoy" mailbox checks, prefer a bounded command such as .\skills\Outlook\check-outlook-emails.ps1 -DateFilter (Get-Date) -JSON, and add -QuickCheck when a fast inbox-only pass is acceptable.
+Prefer JSON output when the goal is to summarize sender, subject, and time.
 Use browser or webmail only if the user explicitly asked for Gmail, Outlook Web, outlook.com, hotmail, or another website.
 "@.Trim()
     }

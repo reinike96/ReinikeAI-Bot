@@ -20,6 +20,7 @@ Use this skill when the orchestrator needs bounded GUI control on the local Wind
 - A supported LLM provider configured for `windows-use`
 
 This repository defaults to `OpenRouter` through the existing `OPENROUTER_API_KEY` / `llm.openRouterApiKey`.
+The default Windows-Use model is `z-ai/glm-5-turbo` with `reasoningEffort` set to `low`.
 
 ## Script
 
@@ -39,6 +40,7 @@ Optional parameters:
 - `-MaxSteps 25`
 - `-UseVision`
 - `-Experimental`
+- `-RunnerDebug`
 
 ## Safety
 

@@ -8,6 +8,42 @@ function Convert-ToPowerShellSingleQuotedLiteral {
     return "'" + $Value.Replace("'", "''") + "'"
 }
 
+function Get-ButtonCallbackData {
+    param([object]$Button)
+
+    if ($null -eq $Button) {
+        return ""
+    }
+
+    if ($Button -is [System.Collections.IDictionary]) {
+        if ($Button.Contains("CallbackData")) {
+            return "$($Button["CallbackData"])"
+        }
+        if ($Button.Contains("callback_data")) {
+            return "$($Button["callback_data"])"
+        }
+    }
+
+    if ($Button.PSObject.Properties["CallbackData"]) {
+        return "$($Button.CallbackData)"
+    }
+    if ($Button.PSObject.Properties["callback_data"]) {
+        return "$($Button.callback_data)"
+    }
+
+    return ""
+}
+
+function Test-IsWindowsUseCommand {
+    param([string]$Command)
+
+    if ([string]::IsNullOrWhiteSpace($Command)) {
+        return $false
+    }
+
+    return ($Command -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1')
+}
+
 function Get-BotConfigFromScriptScope {
     try {
         return (Get-Variable -Name botConfig -Scope Script -ValueOnly -ErrorAction Stop)
@@ -182,6 +218,7 @@ function Invoke-ParsedAction {
             $confirmText = "*Confirmation required*`nReason: OpenCode computer-control tasks can affect the live desktop and running applications.`n`nTask:`n``$taskDescription``"
             Send-TelegramText -chatId $ChatId -text $confirmText -buttons $buttons
             Add-ChatMemory -chatId $ChatId -role "user" -content "[SYSTEM]: A computer-control OpenCode task is waiting for user confirmation: $taskDescription"
+            $result.SuppressFinalReply = $true
             return [PSCustomObject]$result
         }
 
@@ -242,6 +279,26 @@ function Invoke-ParsedAction {
             return [PSCustomObject]$result
         }
         if ($riskProfile.Level -eq "confirm") {
+            if ((Test-IsWindowsUseCommand -Command $cmd) -and (Test-WindowsUseApprovalActive -ChatId $ChatId -UserId $UserId -Command $cmd)) {
+                Write-Host "[ACTION] Reusing active Windows-Use approval for chat $ChatId." -ForegroundColor DarkYellow
+                $jobRecord = Start-ScriptJob -scriptCmd $cmd -chatId $ChatId -taskLabel "Approved Windows-Use" -originalTask $cmd
+                $jobRecord.Label = "Approved Windows-Use"
+                $jobRecord.Capability = "desktop_control"
+                $jobRecord.ExecutionMode = "windows_use_approved_session"
+                Add-ActiveJob -JobRecord $jobRecord
+                Write-JobsFile
+                Update-TelegramStatus -job $jobRecord -text "🖥️ Windows-Use permitido por similitud. Ejecutando en segundo plano."
+                $result.SuppressFinalReply = $true
+                return [PSCustomObject]$result
+            }
+
+            $existingConfirmation = Find-PendingConfirmation -ChatId $ChatId -Command $cmd
+            if ($null -ne $existingConfirmation) {
+                Write-Host "[ACTION] Reusing pending confirmation for sensitive command." -ForegroundColor DarkYellow
+                $result.SuppressFinalReply = $true
+                return [PSCustomObject]$result
+            }
+
             $confirmationId = [guid]::NewGuid().ToString("N")
             Add-PendingConfirmation -ConfirmationId $confirmationId -Payload @{
                 Command   = $cmd
@@ -251,9 +308,19 @@ function Invoke-ParsedAction {
                 CreatedAt = Get-Date
             }
             $buttons = New-ConfirmationButtons -ConfirmData "confirm_cmd:$confirmationId" -CancelData "cancel_cmd:$confirmationId"
-            $confirmText = "*Confirmation required*`nReason: $($riskProfile.Reason)`n`nCommand:`n``$cmd``"
+            if (Test-IsWindowsUseCommand -Command $cmd) {
+                $taskPreview = Get-WindowsUseTaskTextFromCommand -Command $cmd
+                if ($taskPreview.Length -gt 260) {
+                    $taskPreview = $taskPreview.Substring(0, 260) + "..."
+                }
+                $confirmText = "⚠️ *Confirmación requerida*`nMotivo: $($riskProfile.Reason)`n`n🖥️ *Windows-Use va a ejecutar:*`n``$taskPreview``"
+            }
+            else {
+                $confirmText = "⚠️ *Confirmación requerida*`nMotivo: $($riskProfile.Reason)`n`nComando:`n``$cmd``"
+            }
             Send-TelegramText -chatId $ChatId -text $confirmText -buttons $buttons
             Add-ChatMemory -chatId $ChatId -role "user" -content "[SYSTEM]: A sensitive command is waiting for user confirmation: $cmd"
+            $result.SuppressFinalReply = $true
             return [PSCustomObject]$result
         }
 
@@ -337,6 +404,41 @@ function Invoke-ParsedAction {
     }
 
     if ($Item.ActionType -eq "BUTTONS") {
+        $buttonEntries = @()
+        if ($Item.PSObject.Properties["Buttons"]) {
+            $buttonEntries = @($Item.Buttons)
+        }
+        elseif ($Item.PSObject.Properties["Json"] -and -not [string]::IsNullOrWhiteSpace("$($Item.Json)")) {
+            try {
+                $buttonEntries = @($Item.Json | ConvertFrom-Json)
+            }
+            catch {
+                $buttonEntries = @()
+            }
+        }
+
+        $hasModelGeneratedConfirmation = $false
+        $hasPendingNativeConfirmation = ($null -ne (Find-PendingConfirmation -ChatId $ChatId))
+        foreach ($btn in $buttonEntries) {
+            $callbackData = Get-ButtonCallbackData -Button $btn
+            if ($callbackData -match '^(confirm_windows_use.*|execute_windows_task.*|retry_windows_task.*|repair_env|skip|approve.*|reject.*|cancel.*)$') {
+                $hasModelGeneratedConfirmation = $true
+                break
+            }
+
+            if ($hasPendingNativeConfirmation -and $callbackData -match '^(approve.*|reject.*|cancel.*|confirm.*|execute.*|retry.*)$') {
+                $hasModelGeneratedConfirmation = $true
+                break
+            }
+        }
+
+        if ($hasModelGeneratedConfirmation) {
+            Write-Host "[ACTION] Ignoring model-generated confirmation buttons: $($Item.Text)" -ForegroundColor DarkYellow
+            Add-ChatMemory -chatId $ChatId -role "user" -content "[SYSTEM]: The previous BUTTONS action was ignored because it attempted to create a model-generated confirmation flow. Sensitive desktop confirmations are created only by the orchestrator."
+            $result.SuppressFinalReply = $true
+            return [PSCustomObject]$result
+        }
+
         if ($Item.PSObject.Properties["Buttons"]) {
             $result.PendingButtons = @{ text = $Item.Text; buttons = @($Item.Buttons) }
         }

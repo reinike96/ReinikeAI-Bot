@@ -3,12 +3,13 @@ param(
     [string]$Task,
     [string]$Provider = "",
     [string]$Model = "",
+    [string]$ReasoningEffort = "",
     [ValidateSet("edge", "chrome", "firefox")]
     [string]$Browser = "",
     [int]$MaxSteps = 0,
     [switch]$UseVision,
     [switch]$Experimental,
-    [switch]$Debug
+    [switch]$RunnerDebug
 )
 
 $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -37,16 +38,18 @@ function Resolve-PythonInvocation {
         }
 
         $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($cmd) { return @($candidate) }
+        if ($cmd) { return ,@($candidate) }
     }
 
-    return @()
+    return ,@()
 }
 
 $providerToUse = if ([string]::IsNullOrWhiteSpace($Provider)) { $botConfig.WindowsUse.Provider } else { $Provider.Trim() }
 $modelToUse = if ([string]::IsNullOrWhiteSpace($Model)) { $botConfig.WindowsUse.Model } else { $Model.Trim() }
+$reasoningEffortToUse = if ([string]::IsNullOrWhiteSpace($ReasoningEffort)) { "$($botConfig.WindowsUse.ReasoningEffort)" } else { $ReasoningEffort.Trim() }
 $browserToUse = if ([string]::IsNullOrWhiteSpace($Browser)) { $botConfig.WindowsUse.Browser } else { $Browser.Trim().ToLowerInvariant() }
 $maxStepsToUse = if ($MaxSteps -gt 0) { $MaxSteps } else { [int]$botConfig.WindowsUse.MaxSteps }
+$taskToRun = "Complete the task in one bounded run if possible. When entering text, preserve the exact requested text and prefer exact paste/input over approximate typing when available. Task: $Task"
 
 if ([string]::IsNullOrWhiteSpace($providerToUse)) {
     Write-Error "No Windows-Use provider configured."
@@ -86,9 +89,10 @@ $env:ANONYMIZED_TELEMETRY = "false"
 
 $scriptArgs = @(
     $runnerPath,
-    "--task", $Task,
+    "--task", $taskToRun,
     "--provider", $providerToUse,
     "--model", $modelToUse,
+    "--reasoning-effort", $reasoningEffortToUse,
     "--browser", $browserToUse,
     "--max-steps", "$maxStepsToUse",
     "--log-file", $logPath
@@ -96,21 +100,50 @@ $scriptArgs = @(
 
 if ($UseVision -or $botConfig.WindowsUse.UseVision) { $scriptArgs += "--use-vision" }
 if ($Experimental -or $botConfig.WindowsUse.Experimental) { $scriptArgs += "--experimental" }
-if ($Debug) { $scriptArgs += "--debug" }
+if ($RunnerDebug) { $scriptArgs += "--debug" }
 
-$commandName = $pythonInvocation[0]
+$commandName = [string]$pythonInvocation[0]
 $commandArgs = @()
 if ($pythonInvocation.Count -gt 1) {
-    $commandArgs += $pythonInvocation[1..($pythonInvocation.Count - 1)]
+    $commandArgs += @($pythonInvocation[1..($pythonInvocation.Count - 1)])
 }
 $commandArgs += $scriptArgs
 
 Write-Host "[Windows-Use] Provider: $providerToUse | Model: $modelToUse | Browser: $browserToUse | MaxSteps: $maxStepsToUse" -ForegroundColor Cyan
+Write-Host "[Windows-Use] Python command: $commandName" -ForegroundColor DarkGray
 Write-Host "[Windows-Use] Log file: $logPath" -ForegroundColor DarkGray
 
-$output = & $commandName @commandArgs 2>&1
-$exitCode = $LASTEXITCODE
-$outputText = ($output | ForEach-Object { "$_" }) -join "`n"
+try {
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $commandName
+    $allArgs = @($commandArgs)
+    $startInfo.Arguments = [string]::Join(' ', ($allArgs | ForEach-Object {
+        if ($_ -match '\s|"') {
+            '"' + ($_.Replace('"', '\"')) + '"'
+        }
+        else {
+            $_
+        }
+    }))
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $process.Start() | Out-Null
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    $exitCode = [int]$process.ExitCode
+    $process.Dispose()
+    $outputText = (($stdout + "`n" + $stderr).Trim())
+}
+catch {
+    $exitCode = 1
+    $outputText = $_.Exception.Message
+}
 
 if ($exitCode -ne 0) {
     Write-Error "Windows-Use failed with exit code $exitCode.`n$outputText"

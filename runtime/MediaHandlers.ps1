@@ -150,6 +150,14 @@ function Run-PCAction {
 
             $startTime = Get-Date
             $process.Start() | Out-Null
+            $trackedPid = [int]$process.Id
+            Add-ActiveProcess @{
+                Pid = $trackedPid
+                Kind = "PC_CMD"
+                Command = $actionStr
+                ChatId = $chatId
+                CreatedAt = Get-Date
+            }
             $exited = $process.WaitForExit(300000)
             $elapsed = ((Get-Date) - $startTime).TotalSeconds
 
@@ -157,6 +165,7 @@ function Run-PCAction {
                 $stdout = $process.StandardOutput.ReadToEnd()
                 $stderr = $process.StandardError.ReadToEnd()
                 $res = $stdout + $stderr
+                Remove-ActiveProcessByPid -Pid $trackedPid
                 $process.Dispose()
 
                 Write-DailyLog -message "Command finished in $($elapsed.ToString('F2'))s. Output length: $($res.Length)" -type "CMD"
@@ -165,7 +174,13 @@ function Run-PCAction {
                 return $res
             }
             else {
-                $process.Kill()
+                try {
+                    Start-Process -FilePath "cmd.exe" -ArgumentList "/c taskkill /PID $trackedPid /T /F" -WindowStyle Hidden -Wait | Out-Null
+                }
+                catch {
+                    try { $process.Kill() } catch {}
+                }
+                Remove-ActiveProcessByPid -Pid $trackedPid
                 $process.Dispose()
                 Write-DailyLog -message "Command timed out after 300s. Command: $actionStr" -type "WARN"
                 if ($statusMsgId) { Edit-TelegramText -chatId $chatId -messageId $statusMsgId -text "❌ Timeout: Command exceeded 300 seconds." }
@@ -177,5 +192,162 @@ function Run-PCAction {
             if ($statusMsgId) { Edit-TelegramText -chatId $chatId -messageId $statusMsgId -text "❌ Error: $_" }
             return "Execution error: $_"
         }
+    }
+}
+
+function Stop-TrackedPCCommands {
+    param(
+        [string]$Reason = "manual stop"
+    )
+
+    $stoppedPids = @()
+    foreach ($procRecord in @(Get-ActiveProcesses | Where-Object { $_.Kind -eq "PC_CMD" })) {
+        $targetPid = 0
+        try { $targetPid = [int]$procRecord.Pid } catch { $targetPid = 0 }
+        if ($targetPid -le 0) {
+            continue
+        }
+
+        try {
+            Start-Process -FilePath "cmd.exe" -ArgumentList "/c taskkill /PID $targetPid /T /F" -WindowStyle Hidden -Wait | Out-Null
+            $stoppedPids += $targetPid
+        }
+        catch {
+            try {
+                Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue
+                $stoppedPids += $targetPid
+            }
+            catch {}
+        }
+        finally {
+            Remove-ActiveProcessByPid -Pid $targetPid
+        }
+    }
+
+    try {
+        Write-DailyLog -message "Stop-TrackedPCCommands reason='$Reason' stopped_pids=$(@($stoppedPids | Select-Object -Unique).Count)" -type "SYSTEM"
+    }
+    catch {}
+
+    return [PSCustomObject]@{
+        Reason = $Reason
+        ProcessesStopped = @($stoppedPids | Select-Object -Unique).Count
+    }
+}
+
+function Stop-ActiveLocalJobs {
+    param(
+        [string]$Reason = "manual stop"
+    )
+
+    $stoppedJobIds = @()
+    foreach ($jobRecord in @(Get-ActiveJobs | Where-Object { $_.Type -ne "OpenCode" })) {
+        try {
+            Stop-Job -Job $jobRecord.Job -ErrorAction SilentlyContinue | Out-Null
+            Remove-Job -Job $jobRecord.Job -Force -ErrorAction SilentlyContinue
+            $stoppedJobIds += $jobRecord.Job.Id
+        }
+        catch {}
+
+        try {
+            Remove-ActiveJobById -JobId $jobRecord.Job.Id
+        }
+        catch {}
+    }
+
+    if (Get-Command Write-JobsFile -ErrorAction SilentlyContinue) {
+        try { Write-JobsFile } catch {}
+    }
+
+    try {
+        Write-DailyLog -message "Stop-ActiveLocalJobs reason='$Reason' stopped_jobs=$(@($stoppedJobIds | Select-Object -Unique).Count)" -type "SYSTEM"
+    }
+    catch {}
+
+    return [PSCustomObject]@{
+        Reason = $Reason
+        JobsStopped = @($stoppedJobIds | Select-Object -Unique).Count
+    }
+}
+
+function Stop-UntrackedAutomationProcesses {
+    param(
+        [string]$Reason = "manual stop"
+    )
+
+    $patterns = @(
+        'windows_use_runner\.py',
+        'Invoke-WindowsUse\.ps1',
+        'windows-use-venv\\Scripts\\python\.exe',
+        '\bopencode\b',
+        'OpenCode'
+    )
+
+    $stopped = @()
+    foreach ($proc in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+        $cmd = "$($proc.CommandLine)"
+        $name = "$($proc.Name)"
+        if ([string]::IsNullOrWhiteSpace($cmd) -and [string]::IsNullOrWhiteSpace($name)) {
+            continue
+        }
+
+        $matchesPattern = $false
+        foreach ($pattern in $patterns) {
+            if ($name -match $pattern -or $cmd -match $pattern) {
+                $matchesPattern = $true
+                break
+            }
+        }
+
+        if (-not $matchesPattern) {
+            continue
+        }
+
+        $targetPid = 0
+        try { $targetPid = [int]$proc.ProcessId } catch { $targetPid = 0 }
+        if ($targetPid -le 0) {
+            continue
+        }
+
+        try {
+            Start-Process -FilePath "cmd.exe" -ArgumentList "/c taskkill /PID $targetPid /T /F" -WindowStyle Hidden -Wait | Out-Null
+            $stopped += [PSCustomObject]@{ Pid = $targetPid; Name = $name }
+        }
+        catch {}
+    }
+
+    try {
+        Write-DailyLog -message "Stop-UntrackedAutomationProcesses reason='$Reason' stopped=$(@($stopped).Count)" -type "SYSTEM"
+    }
+    catch {}
+
+    return [PSCustomObject]@{
+        Reason = $Reason
+        ProcessesStopped = @($stopped).Count
+        Processes = @($stopped)
+    }
+}
+
+function Stop-AllAutomationProcesses {
+    param(
+        [object]$BotConfig,
+        [string]$Reason = "manual stop",
+        [switch]$StopActiveJobs
+    )
+
+    $localJobsSummary = Stop-ActiveLocalJobs -Reason $Reason
+    $trackedSummary = Stop-TrackedPCCommands -Reason $Reason
+    $openCodeSummary = Stop-OpenCodeServer -BotConfig $BotConfig -Reason $Reason -StopActiveJobs:$StopActiveJobs
+    $untrackedSummary = Stop-UntrackedAutomationProcesses -Reason $Reason
+
+    return [PSCustomObject]@{
+        Reason = $Reason
+        LocalJobsStopped = $localJobsSummary.JobsStopped
+        TrackedCommandsStopped = $trackedSummary.ProcessesStopped
+        OpenCodeJobsStopped = $openCodeSummary.JobsStopped
+        OpenCodeProcessesStopped = $openCodeSummary.ProcessesStopped
+        RemainingOpenCodeProcesses = $openCodeSummary.RemainingProcesses
+        UntrackedProcessesStopped = $untrackedSummary.ProcessesStopped
+        UntrackedProcesses = $untrackedSummary.Processes
     }
 }

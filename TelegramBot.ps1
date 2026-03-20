@@ -151,8 +151,18 @@ function Invoke-BotShutdown {
     $script:BotShutdownInvoked = $true
 
     try {
+        $pcSummary = $null
+        $localJobSummary = $null
+        if (Get-Command Stop-ActiveLocalJobs -ErrorAction SilentlyContinue) {
+            $localJobSummary = Stop-ActiveLocalJobs -Reason $Reason
+        }
+        if (Get-Command Stop-TrackedPCCommands -ErrorAction SilentlyContinue) {
+            $pcSummary = Stop-TrackedPCCommands -Reason $Reason
+        }
         $summary = Stop-OpenCodeServer -BotConfig $botConfig -Reason $Reason -StopActiveJobs:$StopActiveJobs
-        Write-DailyLog -message "Bot shutdown cleanup complete. Reason='$Reason' jobs=$($summary.JobsStopped) processes=$($summary.ProcessesStopped) remaining=$($summary.RemainingProcesses)" -type "SYSTEM"
+        $jobsStopped = if ($null -ne $localJobSummary) { $localJobSummary.JobsStopped } else { 0 }
+        $cmdStopped = if ($null -ne $pcSummary) { $pcSummary.ProcessesStopped } else { 0 }
+        Write-DailyLog -message "Bot shutdown cleanup complete. Reason='$Reason' jobs=$($summary.JobsStopped) processes=$($summary.ProcessesStopped) remaining=$($summary.RemainingProcesses) local_jobs_stopped=$jobsStopped pc_cmd_stopped=$cmdStopped" -type "SYSTEM"
     }
     catch {
         Write-DailyLog -message "Bot shutdown cleanup failed. Reason='$Reason' error=$($_.Exception.Message)" -type "ERROR"

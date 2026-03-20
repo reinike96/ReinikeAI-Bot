@@ -109,6 +109,35 @@ function Convert-TelegramDocumentToContext {
     return $docContext
 }
 
+function Get-LastMeaningfulUserRequest {
+    param([string]$ChatId)
+
+    $history = @(Get-ChatMemory -chatId $ChatId)
+    for ($i = $history.Count - 1; $i -ge 0; $i--) {
+        $item = $history[$i]
+        if ("$($item.role)" -ne "user") {
+            continue
+        }
+
+        $content = $item.content
+        if ($content -isnot [string]) {
+            continue
+        }
+
+        $text = $content.Trim()
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            continue
+        }
+        if ($text.StartsWith("[SYSTEM]:") -or $text.StartsWith("[BUTTON PRESSED:") -or $text.StartsWith("/")) {
+            continue
+        }
+
+        return $text
+    }
+
+    return ""
+}
+
 function Invoke-TelegramCallbackRoute {
     param(
         [object]$CallbackQuery,
@@ -142,15 +171,43 @@ function Invoke-TelegramCallbackRoute {
                 return
             }
 
-            Send-TelegramText -chatId $chatId -text "Running approved command:`n``$($pending.Command)``"
-            $cmdResult = Run-PCAction -actionStr $pending.Command -chatId $chatId
-            $numFilesSent = Send-DetectedFiles -chatId $chatId -text $cmdResult
-            $fileNotice = if ($numFilesSent -gt 0) { "`n`n[SYSTEM]: $numFilesSent file(s) were detected and automatically sent to the user." } else { "" }
-            Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM - APPROVED CMD RESULT]:`n$cmdResult$fileNotice`n`nAnalyze the result above and reply to the user."
-            Add-PendingChat -ChatId $chatId
+            if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
+                $scopeText = Get-LastMeaningfulUserRequest -ChatId "$chatId"
+                Set-WindowsUseApproval -ChatId "$chatId" -UserId "$userId" -Command "$($pending.Command)" -ScopeText $scopeText
+            }
+
+            if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
+                $taskPreview = Get-WindowsUseTaskTextFromCommand -Command "$($pending.Command)"
+                if ($taskPreview.Length -gt 220) {
+                    $taskPreview = $taskPreview.Substring(0, 220) + "..."
+                }
+                $runText = if ([string]::IsNullOrWhiteSpace($taskPreview)) {
+                    "🖥️ Ejecutando Windows-Use en segundo plano..."
+                }
+                else {
+                    "🖥️ Ejecutando Windows-Use en segundo plano...`n`n*$taskPreview*"
+                }
+                Send-TelegramText -chatId $chatId -text $runText
+            }
+            else {
+                Send-TelegramText -chatId $chatId -text "🚀 Ejecutando comando aprobado en segundo plano..."
+            }
+            $jobRecord = Start-ScriptJob -scriptCmd $pending.Command -chatId $chatId -taskLabel "Approved CMD" -originalTask $pending.Command
+            $jobRecord.Label = "Approved CMD"
+            $jobRecord.Capability = "local_command"
+            $jobRecord.ExecutionMode = "confirmed_cmd"
+            Add-ActiveJob -JobRecord $jobRecord
+            Write-JobsFile
+            $statusText = if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
+                "🖥️ Windows-Use aprobado en ejecución."
+            }
+            else {
+                "🚀 Comando aprobado en ejecución."
+            }
+            Update-TelegramStatus -job $jobRecord -text $statusText
         }
         else {
-            Send-TelegramText -chatId $chatId -text "That confirmation request expired or was already used."
+            Send-TelegramText -chatId $chatId -text "⌛ Esa confirmación expiró o ya fue usada."
         }
         return
     }
@@ -163,9 +220,12 @@ function Invoke-TelegramCallbackRoute {
                 Send-TelegramText -chatId $chatId -text "This confirmation belongs to a different user."
                 return
             }
+            if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
+                Clear-WindowsUseApproval -ChatId "$chatId"
+            }
             Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: The user cancelled a pending sensitive command: $($pending.Command)"
         }
-        Send-TelegramText -chatId $chatId -text "Sensitive command cancelled."
+        Send-TelegramText -chatId $chatId -text "🛑 Comando sensible cancelado."
         return
     }
 
@@ -185,11 +245,11 @@ function Invoke-TelegramCallbackRoute {
             $newJob.ExecutionMode = $pending.ExecutionMode
             Add-ActiveJob -JobRecord $newJob
             Write-JobsFile
-            Update-TelegramStatus -job $newJob -text "Delegating approved OpenCode task ($($pending.Capability)): $($pending.TaskDescription)"
-            Send-TelegramText -chatId $chatId -text "Approved. OpenCode task started."
+            Update-TelegramStatus -job $newJob -text "🤖 Ejecutando tarea aprobada de OpenCode ($($pending.Capability))."
+            Send-TelegramText -chatId $chatId -text "🤖 Tarea aprobada. OpenCode ya empezó."
         }
         else {
-            Send-TelegramText -chatId $chatId -text "That OpenCode confirmation expired or was already used."
+            Send-TelegramText -chatId $chatId -text "⌛ Esa confirmación de OpenCode expiró o ya fue usada."
         }
         return
     }
@@ -204,20 +264,26 @@ function Invoke-TelegramCallbackRoute {
             }
             Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: The user cancelled a pending OpenCode task requiring confirmation: $($pending.TaskDescription)"
         }
-        Send-TelegramText -chatId $chatId -text "OpenCode task cancelled."
+        Send-TelegramText -chatId $chatId -text "🛑 Tarea de OpenCode cancelada."
         return
     }
 
     if ($callbackData -eq "restart_confirm") {
         $stopSummary = Stop-OpenCodeServer -BotConfig $BotConfig -Reason "restart command" -StopActiveJobs
-        Send-TelegramText -chatId $chatId -text "Restarting the full system. OpenCode stopped: jobs=$($stopSummary.JobsStopped), processes=$($stopSummary.ProcessesStopped). Please wait a few seconds..."
+        Send-TelegramText -chatId $chatId -text "🔄 Reiniciando el sistema completo. OpenCode detenido: jobs=$($stopSummary.JobsStopped), procesos=$($stopSummary.ProcessesStopped). Espera unos segundos..."
         Write-DailyLog -message "/restart confirmed from button. Exiting so RunBot.bat can restart the process." -type "SYSTEM"
         Invoke-RestMethod -Uri "$ApiUrl/getUpdates?offset=$Offset&limit=1" -Method Get -ErrorAction SilentlyContinue | Out-Null
         exit 0
     }
 
     if ($callbackData -eq "restart_cancel") {
-        Send-TelegramText -chatId $chatId -text "Restart cancelled."
+        Send-TelegramText -chatId $chatId -text "🛑 Reinicio cancelado."
+        return
+    }
+
+    if ($callbackData -match '^(confirm_windows_use.*|execute_windows_task.*|retry_windows_task.*|repair_env|skip|approve.*|reject.*|cancel.*)$') {
+        Send-TelegramText -chatId $chatId -text "⚠️ Botón de confirmación del modelo ignorado. Solo vale la aprobación nativa del orquestador."
+        Write-DailyLog -message "Ignored model-generated callback without native handler: $callbackData" -type "WARN"
         return
     }
 
@@ -296,6 +362,7 @@ function Invoke-TelegramMessageRoute {
     Write-Host "USER: $text" -ForegroundColor Yellow
 
     if ($text -eq "/new") {
+        Clear-WindowsUseApproval -ChatId "$chatId"
         Clear-ChatMemory -chatId $chatId
         Send-TelegramText -chatId $chatId -text "Conversation memory cleared."
         return
@@ -346,6 +413,22 @@ function Invoke-TelegramMessageRoute {
         return
     }
 
+    if ($text -eq "/stopcmd") {
+        Clear-WindowsUseApproval -ChatId "$chatId"
+        $stopSummary = Stop-TrackedPCCommands -Reason "telegram command /stopcmd"
+        $reply = "Local command stop requested.`nTracked processes stopped: $($stopSummary.ProcessesStopped)"
+        Send-TelegramText -chatId $chatId -text $reply
+        return
+    }
+
+    if ($text -eq "/stopall") {
+        Clear-WindowsUseApproval -ChatId "$chatId"
+        $stopSummary = Stop-AllAutomationProcesses -BotConfig $BotConfig -Reason "telegram command /stopall" -StopActiveJobs
+        $reply = "Emergency stop requested.`nLocal jobs stopped: $($stopSummary.LocalJobsStopped)`nTracked local commands stopped: $($stopSummary.TrackedCommandsStopped)`nOpenCode jobs stopped: $($stopSummary.OpenCodeJobsStopped)`nOpenCode processes stopped: $($stopSummary.OpenCodeProcessesStopped)`nOther automation processes stopped: $($stopSummary.UntrackedProcessesStopped)"
+        Send-TelegramText -chatId $chatId -text $reply
+        return
+    }
+
     if ($text -eq "/restart") {
         $restartButtons = @(
             [PSCustomObject]@{ text = "Restart"; callback_data = "restart_confirm" },
@@ -355,6 +438,7 @@ function Invoke-TelegramMessageRoute {
         return
     }
 
+    Clear-WindowsUseApproval -ChatId "$chatId"
     Reset-LastExecutedTags
     Add-ChatMemory -chatId $chatId -role "user" -content $text
     Add-PendingChat -ChatId $chatId
