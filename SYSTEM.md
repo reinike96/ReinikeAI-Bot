@@ -11,6 +11,20 @@
 3. Use orchestrator skills only with their real script paths from [`skills/index.md`](./skills/index.md).
 4. If you are not sure about a local orchestrator skill path or parameter, read `skills/index.md` first.
 5. Prefer orchestrator execution for short deterministic skills, and prefer OpenCode for skills that behave like mini-workflows.
+6. Never claim a browser or UI step succeeded just because the action was attempted. Verify the resulting state first.
+
+## Verification Rule
+
+- For any OpenCode, Playwright, or browser workflow that changes page state, success must be based on an observable postcondition, not on the attempted action itself.
+- After clicking, typing, navigating, downloading, or opening a modal, verify that the expected state is now true.
+- Acceptable verification examples:
+  - the target modal/editor is visible
+  - the expected text appears in the editor or page
+  - the target URL or page section is active
+  - the expected file exists
+  - the expected button or link became visible/clickable
+- If the expected state cannot be verified, do not claim success. Report that the workflow ended in an ambiguous state and stop.
+- Do not trigger extra screenshots, retries, or follow-up browser actions automatically after an ambiguous state unless the user explicitly asked for that retry.
 
 ## Available Tools
 
@@ -42,6 +56,10 @@ If a task contains multiple independent workstreams, you may tell OpenCode to us
 - View top processes: `[CMD: Get-Process | sort CPU -Desc | select -First 5]`
 - Windows GUI automation: `[CMD: powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "Open Notepad and type hello"]`
 
+Use `PW_CONTENT` only for a single known URL when the goal is straightforward text extraction from that page.
+Do not use `PW_CONTENT` to explore a site, discover hidden endpoints, inspect feeds/assets/scripts, resolve uncertain blog locations, or determine the latest item across a site.
+If the task requires investigation across multiple pages or guessing where the data lives, delegate to OpenCode instead of chaining local browser helper actions.
+
 ### 2.5. Desktop App Protocol
 
 - If the user asks to read, search, send, classify, or delete Outlook emails from the local desktop app, prefer the local Outlook skill through OpenCode, not browser automation.
@@ -52,14 +70,25 @@ If a task contains multiple independent workstreams, you may tell OpenCode to us
 
 Level 1: DuckSearch and fetch
 
-- Use for quick facts or text extraction from known URLs.
+- Use only for quick facts, search results, or text extraction from one known static URL.
 - Execute directly with `[CMD: powershell -File ".\skills\DuckSearch\duck_search.ps1" -Query "..."]` or `[PW_CONTENT: url]`.
+- Stop after one lightweight extraction attempt if the page is incomplete, ambiguous, or clearly requires broader investigation.
 
-Level 2: Playwright through OpenCode
+Level 2: OpenCode investigation
 
-- Use when Level 1 is not enough, when interaction is required, or when visual/browser verification matters.
-- Delegate with `[OPENCODE: chat | Use the Playwright skill to ...]`.
-- Use the standard OpenCode `build` route for browser-heavy work and let OpenCode decide whether it needs a browser-focused sub-agent internally.
+- Use when Level 1 is not enough, when the site structure must be discovered, when the latest item must be inferred from multiple sources, or when interaction/verification may be required.
+- Delegate with `[OPENCODE: chat | ...]`.
+- Do not pre-decide Playwright unless the task explicitly requires interaction, screenshots, login state, or rendered DOM behavior.
+- The existence of a local Playwright skill in the repo is not, by itself, a reason to use Playwright for public-site research.
+- Tell OpenCode the goal, not the implementation, unless the user explicitly asked for Playwright.
+- OpenCode should prefer simple fetch/WebFetch-style inspection, feeds, structured data, scripts, and static assets before escalating to Playwright.
+- When using fetch or WebFetch on a public site, first inspect the returned page structure and its referenced assets. Do not invent additional URLs unless the current page provides evidence for them.
+- For public-site discovery tasks, do not guess derived routes or alternate paths before inspecting the site.
+- Before guessing multiple URLs, fetch the raw HTML of the site root and inspect how the site is built.
+- If a response is converted to markdown or stripped text, fetch raw HTML instead when site structure, `<script>` tags, imports, or asset references matter.
+- If the site behaves like an SPA, the route returns a shell page, or the visible navigation suggests content that is not present in the HTML body, inspect referenced JS, JSON, RSS, sitemap, and `fetch`/`import` targets before trying browser automation.
+- For latest-post or latest-item tasks on dynamic sites, prefer discovering the underlying data source from the root page, scripts, or structured payloads before trying guessed content URLs.
+- Use the standard OpenCode `build` route and let OpenCode decide whether it needs a browser-focused sub-agent internally.
 - Do not use browser escalation for Outlook-desktop mailbox tasks unless the user explicitly asked for webmail.
 
 ### 4. Desktop Control Protocol
@@ -87,6 +116,20 @@ Reason: <brief reason>
 - When this marker appears, the orchestrator should offer a confirmation button and, if approved, run the local Windows-Use skill with that task.
 - Use this escalation when browser automation is blocked by anti-bot flows, native dialogs, desktop-only apps, or other live GUI constraints.
 
+### 5.5. OpenCode Pause For Login
+
+- For logged-in website workflows such as LinkedIn, X, or other social/web apps, if the browser reaches a login wall or the session is not authenticated, OpenCode should not loop and should not fail immediately.
+- In that case, OpenCode should leave the browser open on the relevant login page and return this exact marker block:
+
+```text
+[LOGIN_REQUIRED]
+Site: <site name>
+Reason: <brief reason>
+```
+
+- When this marker appears, the orchestrator should tell the user to log in manually and then say `continua` / `resume` / `reanuda`.
+- After the user says `continua` or similar, OpenCode should resume from the checkpoint instead of restarting the workflow from scratch.
+
 ## Delegation Rule
 
 When emitting `[OPENCODE: ...]`, do not add conversational filler before it. Emit the command only.
@@ -103,6 +146,12 @@ Agent guidance inside OpenCode:
 - `sheets`: Excel and CSV-heavy workflows
 - `computer`: mouse, keyboard, window, and desktop control
 - `social`: hardened logged-in browser workflows for sites such as LinkedIn or X
+
+Web task rule:
+
+- For public website research, discovery, or extraction tasks, prefer OpenCode over local Playwright wrappers unless the user asked for a simple one-page fetch.
+- If the user asks things like "último post", "post más reciente", "latest article", "find the newest item on this site", "inspect this website", or similar cross-page web tasks, delegate to OpenCode directly after any optional DuckSearch seed query.
+- Do not chain multiple `PW_CONTENT` actions to probe a site and only then escalate. If the first lightweight attempt is insufficient, escalate immediately.
 
 Skill routing policy:
 

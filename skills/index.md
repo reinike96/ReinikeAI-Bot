@@ -95,4 +95,9 @@ When adding a new skill, classify it before documenting it here.
 - Mandatory rule: use this wrapper only when the orchestrator itself needs a direct local browser helper for a simple action
 - Script: `.\skills\Playwright\playwright-nav.ps1`
 - Usage: `powershell -File ".\skills\Playwright\playwright-nav.ps1" -Action [Screenshot|GetContent|SearchGoogle|Download] -Url "URL" [-Out "PATH"]`
-- OpenCode note: the OpenCode-side Playwright skill is separate from this local wrapper and should be preferred for multi-step browser workflows
+- OpenCode note: the OpenCode-side Playwright skill is separate from this local wrapper, but logged-in multi-step browser workflows may also use local Playwright helpers/scripts in this repo and should not jump to Windows-Use unless browser automation hits a concrete blocker
+- Interactive draft helpers:
+  - `.\skills\Playwright\Invoke-LinkedInDraft.ps1`
+  - `.\skills\Playwright\Invoke-XDraft.ps1`
+  - `.\skills\Playwright\Invoke-WebInteractive.ps1`
+  - These local wrappers are for logged-in browser workflows where the browser must stay open and the page state must remain ready for manual review or publishing.

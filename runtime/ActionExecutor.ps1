@@ -164,10 +164,25 @@ function Invoke-ParsedAction {
     if ($Item.ActionType -eq "OPENCODE") {
         $typeAndMcps = $Item.Route
         $taskDescription = $Item.Task
+        $preferredAgent = ""
 
         [array]$mcps = @()
-        if ($typeAndMcps -match 'chat\s+(.+)') {
-            $mcps = $Matches[1].Split(',') | ForEach-Object { $_.Trim() }
+        if (-not [string]::IsNullOrWhiteSpace($typeAndMcps)) {
+            $routeText = $typeAndMcps.Trim()
+            $routeHead = ($routeText -split '\s+')[0].Trim().ToLowerInvariant()
+            switch ($routeHead) {
+                "browser" { $preferredAgent = "browser" }
+                "docs" { $preferredAgent = "docs" }
+                "sheets" { $preferredAgent = "sheets" }
+                "computer" { $preferredAgent = "computer" }
+                "social" { $preferredAgent = "social" }
+                "build" { $preferredAgent = "" }
+                default { $preferredAgent = "" }
+            }
+
+            if ($routeText -match 'chat\s+(.+)') {
+                $mcps = $Matches[1].Split(',') | ForEach-Object { $_.Trim() }
+            }
         }
 
         if (Test-OpenCodeTaskAlreadyDone -ChatId $ChatId -LastUserIndex $LastUserIndex -Task $taskDescription) {
@@ -176,7 +191,7 @@ function Invoke-ParsedAction {
             return [PSCustomObject]$result
         }
 
-        $plan = New-OpenCodeExecutionPlan -Task $taskDescription -EnableMCPs $mcps
+        $plan = New-OpenCodeExecutionPlan -Task $taskDescription -EnableMCPs $mcps -PreferredAgent $preferredAgent
         $delegatedTaskDescription = if ($plan.PSObject.Properties["DelegatedTask"] -and -not [string]::IsNullOrWhiteSpace("$($plan.DelegatedTask)")) { "$($plan.DelegatedTask)" } else { $taskDescription }
 
         $emojiHourglass = [char]::ConvertFromUtf32(0x23F3)
@@ -186,7 +201,54 @@ function Invoke-ParsedAction {
         if ($plan.ExecutionMode -eq "script" -and -not [string]::IsNullOrWhiteSpace("$($plan.ScriptCommand)")) {
             $scriptLabel = if (-not [string]::IsNullOrWhiteSpace($plan.Label)) { $plan.Label } else { "Local Script" }
             $scriptStatus = "$emojiHourglass Running local workflow ($($plan.Capability), risk: $($capabilityRisk.Level)): $taskDescription"
-            $jobRecord = Start-ScriptJob -scriptCmd "$($plan.ScriptCommand)" -chatId $ChatId -taskLabel $scriptLabel -originalTask $taskDescription
+            $checkpointPath = ""
+            $cfg = Get-BotConfigFromScriptScope
+            $scriptCmd = "$($plan.ScriptCommand)"
+            if ($null -ne $cfg -and $plan.Capability -eq "social") {
+                $checkpointInfo = Resolve-TaskCheckpoint -BotConfig $cfg -ChatId $ChatId -TaskText $taskDescription
+                $checkpointPath = $checkpointInfo.Path
+                Update-TaskCheckpointState -CheckpointPath $checkpointPath -TaskText $taskDescription -Status "running" -LastAction "Task delegated to local script"
+            }
+
+            $scriptTaskInputMode = if ($plan.PSObject.Properties["ScriptTaskInput"]) { "$($plan.ScriptTaskInput)".Trim().ToLowerInvariant() } else { "" }
+            if ($scriptTaskInputMode -eq "file") {
+                $archivesDir = if ($null -ne $cfg -and $cfg.Paths -and -not [string]::IsNullOrWhiteSpace("$($cfg.Paths.ArchivesDir)")) { "$($cfg.Paths.ArchivesDir)" } else { Join-Path (Get-Location) "archives" }
+                $taskInputsDir = Join-Path $archivesDir "task-inputs"
+                New-Item -ItemType Directory -Force -Path $taskInputsDir | Out-Null
+
+                $labelSlug = ($scriptLabel.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+                if ([string]::IsNullOrWhiteSpace($labelSlug)) {
+                    $labelSlug = "task"
+                }
+
+                $chatSlug = if ([string]::IsNullOrWhiteSpace($ChatId)) { "chat" } else { ($ChatId -replace '[^a-zA-Z0-9_-]+', '-') }
+                $taskToken = [guid]::NewGuid().ToString("N").Substring(0, 8)
+                $taskFileName = "{0}-{1}-{2}-{3}.txt" -f $labelSlug, $chatSlug, (Get-Date -Format "yyyyMMdd-HHmmss"), $taskToken
+                $taskFilePath = Join-Path $taskInputsDir $taskFileName
+                Set-Content -Path $taskFilePath -Value $taskDescription -Encoding UTF8
+
+                $quotedTaskFile = Convert-ToPowerShellSingleQuotedLiteral -Value $taskFilePath
+                if ($scriptLabel -in @("LinkedIn Draft", "X Draft", "Web Interactive")) {
+                    $scriptFileName = switch ($scriptLabel) {
+                        "X Draft" { "Invoke-XDraft.ps1" }
+                        "Web Interactive" { "Invoke-WebInteractive.ps1" }
+                        default { "Invoke-LinkedInDraft.ps1" }
+                    }
+                    $taskScriptPath = if ($null -ne $cfg -and $cfg.Paths -and -not [string]::IsNullOrWhiteSpace("$($cfg.Paths.WorkDir)")) {
+                        Join-Path $cfg.Paths.WorkDir "skills\Playwright\$scriptFileName"
+                    }
+                    else {
+                        Join-Path (Get-Location) "skills\Playwright\$scriptFileName"
+                    }
+                    $quotedScriptPath = Convert-ToPowerShellSingleQuotedLiteral -Value $taskScriptPath
+                    $scriptCmd = "& $quotedScriptPath -TaskFile $quotedTaskFile"
+                }
+                else {
+                    $scriptCmd = "$scriptCmd -TaskFile $quotedTaskFile"
+                }
+            }
+
+            $jobRecord = Start-ScriptJob -scriptCmd $scriptCmd -chatId $ChatId -taskLabel $scriptLabel -originalTask $taskDescription -checkpointPath $checkpointPath
             $jobRecord.Label = $scriptLabel
             $jobRecord.Capability = $plan.Capability
             $jobRecord.CapabilityRisk = $capabilityRisk.Level
@@ -233,7 +295,7 @@ function Invoke-ParsedAction {
         }
         $newJob.Capability = $plan.Capability
         $newJob.CapabilityRisk = $capabilityRisk.Level
-        $newJob.ExecutionMode = $plan.ExecutionMode
+        $newJob.ExecutionMode = if ($newJob.PSObject.Properties["Transport"] -and "$($newJob.Transport)" -eq "cli") { "cli" } else { $plan.ExecutionMode }
         Update-TelegramStatus -job $newJob -text $msgStatus
         Add-ActiveJob -JobRecord $newJob
         Write-JobsFile
@@ -332,6 +394,15 @@ function Invoke-ParsedAction {
 
     if ($Item.ActionType -eq "PW_CONTENT") {
         $url = $Item.Url
+        if (Test-ShouldBlockPWContentAction -ChatId $ChatId -Url $url) {
+            Write-Host "[GUARD] Blocking PW_CONTENT for discovery-style task: $url" -ForegroundColor Yellow
+            Add-ChatMemory -chatId $ChatId -role "user" -content "[SYSTEM]: Do not use PW_CONTENT for latest-item or site-discovery tasks by guessing a derived URL. Investigate the site structure first through OpenCode or direct fetch-style inspection of the root page and its referenced assets."
+            $result.RequiresLoop = $true
+            $result.Blocked = $true
+            $result.BlockedTag = $Item.Raw
+            return [PSCustomObject]$result
+        }
+
         Write-Host "[ACTION] PW_CONTENT: $url" -ForegroundColor Cyan
         Send-TelegramTyping -chatId $ChatId
         $pwRes = Run-PCAction -actionStr "powershell -File .\skills\Playwright\playwright-nav.ps1 -Action GetContent -Url '$url'" -chatId $ChatId
@@ -434,7 +505,7 @@ function Invoke-ParsedAction {
 
         if ($hasModelGeneratedConfirmation) {
             Write-Host "[ACTION] Ignoring model-generated confirmation buttons: $($Item.Text)" -ForegroundColor DarkYellow
-            Add-ChatMemory -chatId $ChatId -role "user" -content "[SYSTEM]: The previous BUTTONS action was ignored because it attempted to create a model-generated confirmation flow. Sensitive desktop confirmations are created only by the orchestrator."
+            Add-ChatMemory -chatId $ChatId -role "user" -content "[SYSTEM]: The previous BUTTONS action was ignored because it attempted to create a model-generated confirmation flow. Sensitive confirmations are created only by the orchestrator. If the user already approved the native orchestrator confirmation, treat that action as authorized and do not ask for confirmation again."
             $result.SuppressFinalReply = $true
             return [PSCustomObject]$result
         }

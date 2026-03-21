@@ -1,5 +1,7 @@
 const { chromium } = require('playwright');
+const http = require('http');
 const path = require('path');
+const { spawn } = require('child_process');
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -13,69 +15,198 @@ function slugify(value) {
         .slice(0, 50) || 'result';
 }
 
+function envBool(name, defaultValue) {
+    const raw = process.env[name];
+    if (typeof raw === 'undefined' || raw === null || raw === '') {
+        return defaultValue;
+    }
+
+    return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+
+function httpGetJson(url) {
+    return new Promise((resolve, reject) => {
+        const req = http.get(url, response => {
+            if (response.statusCode !== 200) {
+                response.resume();
+                reject(new Error(`Unexpected HTTP status ${response.statusCode} for ${url}`));
+                return;
+            }
+
+            let raw = '';
+            response.setEncoding('utf8');
+            response.on('data', chunk => {
+                raw += chunk;
+            });
+            response.on('end', () => {
+                try {
+                    resolve(JSON.parse(raw));
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.setTimeout(2000, () => {
+            req.destroy(new Error(`Timeout fetching ${url}`));
+        });
+    });
+}
+
+async function waitForDebugger(debugPort, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    const versionUrl = `http://127.0.0.1:${debugPort}/json/version`;
+
+    while (Date.now() < deadline) {
+        try {
+            await httpGetJson(versionUrl);
+            return true;
+        } catch {}
+
+        await sleep(500);
+    }
+
+    return false;
+}
+
+async function ensureManagedChrome({ chromeExecutable, profileDir, debugPort, startUrl }) {
+    const ready = await waitForDebugger(debugPort, 1000);
+    if (ready) {
+        return false;
+    }
+
+    const args = [
+        `--remote-debugging-port=${debugPort}`,
+        `--user-data-dir=${profileDir}`,
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--new-window',
+        startUrl,
+    ];
+
+    const child = spawn(chromeExecutable, args, {
+        detached: true,
+        stdio: 'ignore',
+    });
+    child.unref();
+
+    const started = await waitForDebugger(debugPort, 30000);
+    if (!started) {
+        throw new Error(`Managed Chrome did not expose the debugger on port ${debugPort}`);
+    }
+
+    return true;
+}
+
+async function connectToManagedBrowser(debugPort) {
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
+    const context = browser.contexts()[0];
+    if (!context) {
+        throw new Error('No browser context is available after connecting to managed Chrome.');
+    }
+    return { browser, context };
+}
+
+function getComparableHostname(value) {
+    if (!value) {
+        return '';
+    }
+
+    try {
+        return new URL(value).hostname.toLowerCase();
+    } catch {
+        return '';
+    }
+}
+
+function pickReusablePage(context, targetUrl) {
+    const pages = context.pages().filter(page => {
+        const pageUrl = page.url();
+        return pageUrl && pageUrl !== 'about:blank';
+    });
+
+    if (pages.length === 0) {
+        return null;
+    }
+
+    const targetHostname = getComparableHostname(targetUrl);
+    if (targetHostname) {
+        const sameHostPages = pages.filter(page => getComparableHostname(page.url()) === targetHostname);
+        if (sameHostPages.length > 0) {
+            return sameHostPages[sameHostPages.length - 1];
+        }
+    }
+
+    return pages[pages.length - 1];
+}
+
+async function acceptGoogleConsent(targetPage) {
+    const consentSelectors = [
+        'button:has-text("Accept all")',
+        'button:has-text("Aceptar todo")',
+        'button:has-text("Alle akzeptieren")',
+        '#L2AGLb'
+    ];
+    for (const selector of consentSelectors) {
+        const button = targetPage.locator(selector).first();
+        if (await button.count()) {
+            try {
+                await button.click({ timeout: 1500 });
+                await targetPage.waitForTimeout(1000);
+                break;
+            } catch {}
+        }
+    }
+}
+
+async function googleSearch(targetPage, query) {
+    await targetPage.goto('https://www.google.com', { waitUntil: 'networkidle', timeout: 60000 });
+    await targetPage.waitForTimeout(2000);
+    await acceptGoogleConsent(targetPage);
+
+    const searchBox = targetPage.locator('textarea[name="q"]').first();
+    await searchBox.waitFor({ state: 'visible', timeout: 15000 });
+    await searchBox.click({ force: true });
+    await searchBox.fill('');
+    await searchBox.type(query, { delay: 100 });
+    await targetPage.keyboard.press('Enter');
+    await targetPage.waitForLoadState('networkidle');
+    await targetPage.waitForTimeout(2000);
+}
+
 async function run() {
     const action = process.argv[2];
     const url = process.argv[3];
     const outputPath = process.argv[4];
 
     if (!action || !url) {
-        console.error("Usage: node browser-helper.js <action> <url> [outputPath]");
+        console.error('Usage: node browser-helper.js <action> <url> [outputPath]');
         process.exit(1);
     }
 
     const projectRoot = process.env.BOT_PROJECT_ROOT || process.cwd();
-    const chromeProfilePath = process.env.CHROME_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
-    const chromeExecutable = process.env.CHROME_EXECUTABLE || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+    const chromeExecutable = process.env.CHROME_EXECUTABLE || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
     const playwrightProfilePath = process.env.PLAYWRIGHT_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
-    const persistentProfilePath = chromeProfilePath && chromeProfilePath.trim() ? chromeProfilePath : playwrightProfilePath;
-    
-    const browser = await chromium.launchPersistentContext(
-        persistentProfilePath,
-        { 
-            headless: false,
-            executablePath: chromeExecutable,
-            args: ['--disable-blink-features=AutomationControlled']
-        }
-    );
-    
-    const page = browser.pages[0] || await browser.newPage();
+    const chromeProfilePath = process.env.CHROME_PROFILE_DIR || playwrightProfilePath;
+    const profileDir = (playwrightProfilePath && playwrightProfilePath.trim()) ? playwrightProfilePath : chromeProfilePath;
+    const debugPort = Number.parseInt(process.env.BROWSER_DEBUG_PORT || '9222', 10);
+    const keepOpen = envBool('BROWSER_KEEP_OPEN', true);
 
-    async function acceptGoogleConsent(targetPage) {
-        const consentSelectors = [
-            'button:has-text("Accept all")',
-            'button:has-text("Aceptar todo")',
-            'button:has-text("Alle akzeptieren")',
-            '#L2AGLb'
-        ];
-        for (const selector of consentSelectors) {
-            const button = targetPage.locator(selector).first();
-            if (await button.count()) {
-                try {
-                    await button.click({ timeout: 1500 });
-                    await targetPage.waitForTimeout(1000);
-                    break;
-                } catch {}
-            }
-        }
-    }
+    await ensureManagedChrome({
+        chromeExecutable,
+        profileDir,
+        debugPort,
+        startUrl: action === 'SearchGoogle' || action === 'GoogleTopResultsScreenshots' ? 'https://www.google.com' : url,
+    });
 
-    async function googleSearch(targetPage, query) {
-        await targetPage.goto('https://www.google.com', { waitUntil: 'networkidle', timeout: 60000 });
-        await targetPage.waitForTimeout(2000);
-        await acceptGoogleConsent(targetPage);
-
-        const searchBox = targetPage.locator('textarea[name="q"]').first();
-        await searchBox.waitFor({ state: 'visible', timeout: 15000 });
-        await searchBox.click({ force: true });
-        await searchBox.fill('');
-        await searchBox.type(query, { delay: 100 });
-        await targetPage.keyboard.press('Enter');
-        await targetPage.waitForLoadState('networkidle');
-        await targetPage.waitForTimeout(2000);
-    }
+    const { browser, context } = await connectToManagedBrowser(debugPort);
+    let page = null;
 
     try {
         if (action === 'SearchGoogle') {
+            page = await context.newPage();
+            await page.bringToFront().catch(() => {});
             await googleSearch(page, url);
             if (outputPath) {
                 await page.screenshot({ path: outputPath, fullPage: true });
@@ -85,6 +216,8 @@ async function run() {
                 console.log(content);
             }
         } else if (action === 'GoogleTopResultsScreenshots') {
+            page = await context.newPage();
+            await page.bringToFront().catch(() => {});
             const outputDir = outputPath || path.join(projectRoot, 'archives');
             await googleSearch(page, url);
 
@@ -121,8 +254,9 @@ async function run() {
             const savedFiles = [];
             for (let index = 0; index < topResults.length; index++) {
                 const result = topResults[index];
-                const targetPage = await browser.newPage();
+                const targetPage = await context.newPage();
                 try {
+                    await targetPage.bringToFront().catch(() => {});
                     await targetPage.goto(result.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
                     try {
                         await targetPage.waitForLoadState('networkidle', { timeout: 10000 });
@@ -133,7 +267,7 @@ async function run() {
                     await targetPage.screenshot({ path: screenshotPath, fullPage: true });
                     savedFiles.push({ title: result.title, url: result.href, path: screenshotPath });
                 } finally {
-                    await targetPage.close();
+                    await targetPage.close().catch(() => {});
                 }
             }
 
@@ -142,20 +276,33 @@ async function run() {
                 console.log(`${item.title} | ${item.url} | ${item.path}`);
             }
         } else if (action === 'KeepOpen') {
-            console.log(`Browser will stay open. Close it manually when ready.`);
-            await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
-            await new Promise(() => {});
+            page = pickReusablePage(context, url) || await context.newPage();
+            await page.bringToFront().catch(() => {});
+            if (!page.url() || page.url() === 'about:blank' || getComparableHostname(page.url()) !== getComparableHostname(url)) {
+                await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+            }
+            console.log('Browser is open and will remain available for reuse.');
         } else {
-            await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+            page = pickReusablePage(context, url) || await context.newPage();
+            await page.bringToFront().catch(() => {});
+            const currentUrl = page.url();
+            const sameHost = getComparableHostname(currentUrl) && getComparableHostname(currentUrl) === getComparableHostname(url);
+            if (!sameHost) {
+                await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+            }
 
             if (action === 'Screenshot') {
                 await page.screenshot({ path: outputPath, fullPage: true });
                 console.log(`Screenshot saved at: ${outputPath}`);
             } else if (action === 'GetContent') {
                 const content = await page.evaluate(() => {
-                    const scripts = document.querySelectorAll('script, style, iframe, nav, footer, header');
-                    scripts.forEach(s => s.remove());
-                    return document.body.innerText;
+                    const root = document.body ? document.body.cloneNode(true) : null;
+                    if (!root) {
+                        return '';
+                    }
+                    const ignored = root.querySelectorAll('script, style, iframe, nav, footer, header');
+                    ignored.forEach(node => node.remove());
+                    return root.innerText;
                 });
                 console.log(content);
             } else if (action === 'Download') {
@@ -172,8 +319,8 @@ async function run() {
         console.error(`Error in Playwright: ${err.message}`);
         process.exit(1);
     } finally {
-        if (action !== 'KeepOpen') {
-            await browser.close();
+        if (!keepOpen) {
+            await browser.close().catch(() => {});
         }
     }
 }

@@ -127,6 +127,7 @@ function Import-BotSettings {
             Port           = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_PORT" -JsonPath "opencode.port" -DefaultValue 4096)
             Command        = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_COMMAND" -JsonPath "opencode.command" -DefaultValue "opencode"
             ConfigPath     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_CONFIG_PATH" -JsonPath "opencode.configPath" -DefaultValue (Join-Path $env:USERPROFILE ".config\opencode\opencode.json")
+            Transport      = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_TRANSPORT" -JsonPath "opencode.transport" -DefaultValue "cli"
             DefaultModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_DEFAULT_MODEL" -JsonPath "opencode.defaultModel" -DefaultValue "opencode/MiMo-V2-Pro-Free"
             Packs          = [PSCustomObject]@{
                 Browser = $browserPackEnabled
@@ -142,6 +143,8 @@ function Import-BotSettings {
             PlaywrightProfileDir = $playwrightProfileDir
             Locale             = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_LOCALE" -JsonPath "browser.locale" -DefaultValue "en-US"
             Timezone           = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_TIMEZONE" -JsonPath "browser.timezone" -DefaultValue "UTC"
+            DebugPort          = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_DEBUG_PORT" -JsonPath "browser.debugPort" -DefaultValue 9222)
+            KeepOpen           = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_KEEP_OPEN" -JsonPath "browser.keepOpen" -DefaultValue $true))
         }
         WindowsUse = [PSCustomObject]@{
             Enabled       = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_ENABLED" -JsonPath "windowsUse.enabled" -DefaultValue $false))

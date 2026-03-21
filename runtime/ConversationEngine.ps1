@@ -71,8 +71,9 @@ function Update-ConversationTurnState {
         [bool]$SuppressFinalReply = $false
     )
 
-    if (-not [string]::IsNullOrWhiteSpace($TextChunk)) {
-        $TurnState.ResponseText += $TextChunk
+    $safeTextChunk = if ($null -eq $TextChunk) { "" } else { "$TextChunk" }
+    if (-not [string]::IsNullOrWhiteSpace($safeTextChunk)) {
+        $TurnState.ResponseText += $safeTextChunk
     }
     if ($null -ne $PendingButtons) {
         $TurnState.PendingButtons = $PendingButtons

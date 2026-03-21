@@ -6,6 +6,82 @@ function Add-PendingChat {
     Add-PendingChatId -ChatId $ChatId
 }
 
+function Get-BotConfigFromQueueScope {
+    try {
+        return (Get-Variable -Name botConfig -Scope Script -ValueOnly -ErrorAction Stop)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-LatestUserMessageText {
+    param([array]$History)
+
+    if ($null -eq $History) {
+        return ""
+    }
+
+    for ($index = $History.Count - 1; $index -ge 0; $index--) {
+        $item = $History[$index]
+        if ($null -eq $item) {
+            continue
+        }
+
+        if ("$($item.role)" -ne "user") {
+            continue
+        }
+
+        $content = "$($item.content)"
+        if ($content -match '^\[SYSTEM\]') {
+            continue
+        }
+
+        return $content.Trim()
+    }
+
+    return ""
+}
+
+function Get-ResumeDirectiveForChat {
+    param(
+        [string]$ChatId,
+        [array]$History
+    )
+
+    $lastUserText = Get-LatestUserMessageText -History $History
+    if ([string]::IsNullOrWhiteSpace($lastUserText) -or $lastUserText -notmatch '(?i)^\s*(continua|continue|resume|reanuda|retoma|seguir|sigue)\s*[.!]*\s*$') {
+        return ""
+    }
+
+    $cfg = Get-BotConfigFromQueueScope
+    if ($null -eq $cfg) {
+        return ""
+    }
+
+    $root = Get-TaskCheckpointRoot -BotConfig $cfg -ChatId $ChatId
+    $candidateFiles = @(Get-ChildItem -Path $root -Filter "*.json" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+    foreach ($candidate in $candidateFiles) {
+        $checkpoint = Read-TaskCheckpoint -CheckpointPath $candidate.FullName
+        if ($null -eq $checkpoint) {
+            continue
+        }
+
+        if ("$($checkpoint.status)" -ne "waiting_for_login") {
+            continue
+        }
+
+        $subject = "$($checkpoint.subject)".Trim()
+        if ([string]::IsNullOrWhiteSpace($subject)) {
+            continue
+        }
+
+        return "[SYSTEM]: The user asked to continue. Resume this exact paused task from the saved checkpoint instead of starting a new workflow:`n$subject"
+    }
+
+    return ""
+}
+
 function Get-SystemStatusReport {
     param(
         [string]$WorkDir
@@ -98,7 +174,12 @@ function Invoke-PendingChatProcessing {
         $loopCount++
 
         $history = Get-ChatMemory -chatId $chatId
-        $msgs = @(@{ role = "system"; content = $FullSystemPrompt }) + $history
+        $msgs = @(@{ role = "system"; content = $FullSystemPrompt })
+        $resumeDirective = Get-ResumeDirectiveForChat -ChatId $chatId -History $history
+        if (-not [string]::IsNullOrWhiteSpace($resumeDirective)) {
+            $msgs += @{ role = "system"; content = $resumeDirective }
+        }
+        $msgs += $history
 
         $modelTurn = Invoke-ModelTurnWithTyping -ChatId $chatId -Messages $msgs -ApiUrl $ApiUrl
         Optimize-ChatMemory -chatId $chatId
@@ -142,6 +223,9 @@ function Invoke-PendingChatProcessing {
             }
             if ($null -ne $actionResult.PendingButtons) {
                 $turnState = Update-ConversationTurnState -TurnState $turnState -PendingButtons $actionResult.PendingButtons
+            }
+            if (-not [string]::IsNullOrWhiteSpace("$($actionResult.BlockedTag)")) {
+                $turnState = Update-ConversationTurnState -TurnState $turnState -BlockedTag $actionResult.BlockedTag
             }
             if ($actionResult.SuppressFinalReply) {
                 $turnState = Update-ConversationTurnState -TurnState $turnState -SuppressFinalReply $true

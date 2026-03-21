@@ -21,6 +21,46 @@ function Get-WindowsUseEscalationRequest {
     }
 }
 
+function Get-LoginRequiredRequest {
+    param([string]$ResultText)
+
+    if ([string]::IsNullOrWhiteSpace($ResultText)) {
+        return $null
+    }
+
+    if ($ResultText -notmatch '(?s)\[LOGIN_REQUIRED\]\s*Site:\s*(?<site>[^\r\n]+)\s*Reason:\s*(?<reason>[^\r\n]+)') {
+        return $null
+    }
+
+    $siteText = $Matches['site'].Trim()
+    $reasonText = $Matches['reason'].Trim()
+    if ([string]::IsNullOrWhiteSpace($siteText)) {
+        $siteText = "the website"
+    }
+
+    return [PSCustomObject]@{
+        Site = $siteText
+        Reason = $reasonText
+    }
+}
+
+function Get-DraftReadyRequest {
+    param([string]$ResultText)
+
+    if ([string]::IsNullOrWhiteSpace($ResultText)) {
+        return $null
+    }
+
+    if ($ResultText -notmatch '(?s)\[DRAFT_READY\]\s*Site:\s*(?<site>[^\r\n]+)(?:\s*Screenshot:\s*(?<shot>[^\r\n]+))?') {
+        return $null
+    }
+
+    return [PSCustomObject]@{
+        Site = $Matches['site'].Trim()
+        Screenshot = $Matches['shot'].Trim()
+    }
+}
+
 function Offer-WindowsUseEscalation {
     param(
         [object]$JobRecord,
@@ -109,7 +149,12 @@ function Get-StuckJobs {
         $isCriticallyStuck = $elapsedMinutes -ge $stuckThreshold
 
         if ($j.Type -eq "OpenCode") {
-            $heartbeatFile = "$WorkDir\heartbeat_$($j.Job.Id).json"
+            $heartbeatFile = if ($j.PSObject.Properties["HeartbeatPath"] -and -not [string]::IsNullOrWhiteSpace("$($j.HeartbeatPath)")) {
+                "$($j.HeartbeatPath)"
+            }
+            else {
+                "$WorkDir\heartbeat_$($j.Job.Id).json"
+            }
             if (Test-Path $heartbeatFile) {
                 try {
                     $hb = Get-Content $heartbeatFile -Raw | ConvertFrom-Json
@@ -201,6 +246,9 @@ function Complete-ActiveJobs {
             $checkpointStatus = if ($subRes -match '\[WINDOWS_USE_FALLBACK_REQUIRED\]') {
                 "needs_desktop_control"
             }
+            elseif ($subRes -match '\[LOGIN_REQUIRED\]') {
+                "waiting_for_login"
+            }
             elseif ($subRes -match '^\[ERROR_') {
                 "failed"
             }
@@ -210,10 +258,11 @@ function Complete-ActiveJobs {
             $checkpointAction = switch ($checkpointStatus) {
                 "completed" { "Task completed" }
                 "needs_desktop_control" { "Task paused pending Windows-Use escalation" }
+                "waiting_for_login" { "Task paused pending manual website login" }
                 default { "Task finished with error" }
             }
             try {
-                Update-TaskCheckpointState -CheckpointPath $j.CheckpointPath -TaskText $j.Task -Status $checkpointStatus -ResultText $subRes -LastAction $checkpointAction -LastError $(if ($checkpointStatus -eq "failed") { $subRes } elseif ($checkpointStatus -eq "needs_desktop_control") { "OpenCode requested Windows-Use escalation." } else { "" })
+                Update-TaskCheckpointState -CheckpointPath $j.CheckpointPath -TaskText $j.Task -Status $checkpointStatus -ResultText $subRes -LastAction $checkpointAction -LastError $(if ($checkpointStatus -eq "failed") { $subRes } elseif ($checkpointStatus -eq "needs_desktop_control") { "OpenCode requested Windows-Use escalation." } elseif ($checkpointStatus -eq "waiting_for_login") { "OpenCode paused because manual website login is required." } else { "" })
             }
             catch {
                 Write-DailyLog -message "Checkpoint update failed for job $($j.Job.Id): $_" -type "WARN"
@@ -257,6 +306,83 @@ function Complete-ActiveJobs {
                 }
             }
 
+            $loginRequired = Get-LoginRequiredRequest -ResultText $subRes
+            if (($j.Type -eq "OpenCode" -or $j.Type -eq "Script") -and $null -ne $loginRequired) {
+                $siteName = $loginRequired.Site
+                $reasonText = if ([string]::IsNullOrWhiteSpace($loginRequired.Reason)) { "Login is required before the workflow can continue." } else { $loginRequired.Reason }
+                $actorName = if ($j.Type -eq "Script") { "El navegador de automatizacion" } else { "OpenCode" }
+                Send-TelegramText -chatId $j.ChatId -text "[LOGIN] $actorName dejo el navegador abierto esperando inicio de sesion en $($siteName)`n`nMotivo: $reasonText`n`nInicia sesion en esa ventana y luego dime ``continua`` para retomar desde donde quedo."
+                Add-ChatMemory -chatId $j.ChatId -role "system" -content ("SYSTEM: The task paused because login is required on {0}. The browser was left open for manual sign-in. If the user says continue/continua/reanuda, resume the same task from the checkpoint instead of restarting." -f $siteName)
+                Remove-ActiveJobById -JobId $j.Job.Id
+                Write-JobsFile
+                continue
+            }
+
+            $draftReady = Get-DraftReadyRequest -ResultText $subRes
+            if ($j.Type -eq "Script" -and $null -ne $draftReady) {
+                $siteName = if ([string]::IsNullOrWhiteSpace($draftReady.Site)) { "the website" } else { $draftReady.Site }
+                if ("$($j.Label)" -eq "Web Interactive") {
+                    Send-TelegramText -chatId $j.ChatId -text "[READY] La pagina quedo lista en $($siteName)`nDeje el navegador abierto para que revises el estado final y continues manualmente si quieres."
+                    Add-ChatMemory -chatId $j.ChatId -role "system" -content "[SYSTEM]: A local browser automation script left $siteName open in a verified ready state for manual review. Do not claim it was submitted or published."
+                }
+                else {
+                    Send-TelegramText -chatId $j.ChatId -text "[READY] El borrador quedo listo en $($siteName)`nDeje el navegador abierto para que revises el texto y pulses publicar manualmente si quieres. No publique nada."
+                    Add-ChatMemory -chatId $j.ChatId -role "system" -content "[SYSTEM]: A local browser automation script left the $siteName draft open for manual review and publishing. Do not claim it was published."
+                }
+                Remove-ActiveJobById -JobId $j.Job.Id
+                Write-JobsFile
+                continue
+            }
+
+            if ($j.Type -eq "Script" -and "$($j.Label)" -in @("LinkedIn Draft", "X Draft", "Web Interactive")) {
+                $emojiWarn = [char]::ConvertFromUtf32(0x26A0)
+                $preview = if ([string]::IsNullOrWhiteSpace($subRes)) { "(empty output)" } else { $subRes.Trim() }
+                if ($preview.Length -gt 500) {
+                    $preview = $preview.Substring(0, 500) + "..."
+                }
+
+                $workflowName = switch ("$($j.Label)") {
+                    "X Draft" { "X" }
+                    "LinkedIn Draft" { "LinkedIn" }
+                    default { "browser workflow" }
+                }
+                Update-TelegramStatus -job $j -text "$emojiWarn *$workflowName ended without confirmation.*"
+                Send-TelegramText -chatId $j.ChatId -text "[WARN] El flujo de $workflowName termino en un estado ambiguo: no devolvio ``[DRAFT_READY]`` ni ``[LOGIN_REQUIRED]``. Lo detuve aqui y no lance capturas ni reintentos automaticos.`n`nUltima salida:`n$preview"
+                Add-ChatMemory -chatId $j.ChatId -role "system" -content ("SYSTEM: A {0} script ended without the required [DRAFT_READY] or [LOGIN_REQUIRED] marker. Do not trigger follow-up screenshots, retries, or new browser actions automatically. Report the ambiguous state directly to the user." -f $workflowName)
+                Remove-ActiveJobById -JobId $j.Job.Id
+                Write-JobsFile
+                continue
+            }
+
+            if ($j.Type -eq "Script" -and $subRes.Trim() -eq "Script finished without output.") {
+                $emojiWarn = [char]::ConvertFromUtf32(0x26A0)
+                Update-TelegramStatus -job $j -text "$emojiWarn *Local script finished without output.*"
+                Send-TelegramText -chatId $j.ChatId -text "[WARN] El script local termino sin devolver resultado visible. Lo trate como fallo, no como exito. Si vuelve a pasar tras reiniciar el bot, revisare el helper local de navegador."
+                Add-ChatMemory -chatId $j.ChatId -role "system" -content "[SYSTEM]: A local script finished without visible output. Treat this as a failure condition instead of a successful completion."
+                Remove-ActiveJobById -JobId $j.Job.Id
+                Write-JobsFile
+                continue
+            }
+
+            if ($j.Type -eq "OpenCode" -and $subRes -match '^\[ERROR_OPENCODE\]\s*(.+)$') {
+                $safeError = $Matches[1].Trim()
+                $emojiWarn = [char]::ConvertFromUtf32(0x26A0)
+                Update-TelegramStatus -job $j -text "$emojiWarn *OpenCode failed.* No automatic local fallback was executed."
+                $errorNotice = @(
+                    "$emojiWarn OpenCode no pudo completar la tarea.",
+                    "",
+                    "Error:",
+                    $safeError,
+                    "",
+                    "No ejecute ningun fallback local automatico despues del fallo. Si quieres, reintenta OpenCode o revisa el servidor."
+                ) -join "`n"
+                Send-TelegramText -chatId $j.ChatId -text $errorNotice
+                Add-ChatMemory -chatId $j.ChatId -role "system" -content ("SYSTEM: OpenCode failed for task '{0}'. Error: {1}. Do not start local fallback actions automatically after this failure. Wait for explicit user instruction." -f $j.Task, $safeError)
+                Remove-ActiveJobById -JobId $j.Job.Id
+                Write-JobsFile
+                continue
+            }
+
             $emojiCheck = [char]::ConvertFromUtf32(0x2705)
             Update-TelegramStatus -job $j -text "$emojiCheck *Task completed* ($($j.Type)). Analyzing results..."
 
@@ -264,9 +390,9 @@ function Complete-ActiveJobs {
             $fileNotice = if ($numFilesSent -gt 0) { "`n`n[SYSTEM]: $numFilesSent file(s) were detected and automatically sent to the user. Do not try to send them again with 'Telegram_Sender' or 'CMD'." } else { "" }
 
             $sanitizedRes = $subRes -replace '(?i)</?(minimax:)?tool_call.*?>', '' -replace '(?i)</?invoke.*?>', ''
-            $sysMsg = "[System - Task '$($j.Task)' completed by $($j.Type)]. Result:`n$sanitizedRes$fileNotice`n`nYou must now analyze this result and reply to the user with a clear English summary. Do not delegate again. Respond directly."
+            $sysMsg = ("SYSTEM: Task '{0}' completed by {1}. Result:`n{2}{3}`n`nYou must now analyze this result and reply to the user with a clear English summary. Do not delegate again. Respond directly." -f $j.Task, $j.Type, $sanitizedRes, $fileNotice)
             try {
-                Add-ChatMemory -chatId $j.ChatId -role "user" -content $sysMsg
+                Add-ChatMemory -chatId $j.ChatId -role "system" -content $sysMsg
             }
             catch {
                 Write-DailyLog -message "Error saving job memory for $($j.Job.Id): $_" -type "ERROR"
@@ -326,7 +452,7 @@ function Remove-StuckJobs {
                 Update-TaskCheckpointState -CheckpointPath $j.CheckpointPath -TaskText $j.Task -Status "stuck" -LastAction "Task cancelled by stuck-job guard" -LastError "OpenCode task became unresponsive after $elapsed minutes."
             }
             catch {
-                Write-DailyLog -message "Checkpoint update failed for stuck job $($j.Job.Id): $_" -type "WARN"
+                Write-DailyLog -message ("Checkpoint update failed for stuck job {0}: {1}" -f $j.Job.Id, $_) -type "WARN"
             }
         }
 

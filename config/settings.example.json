@@ -22,6 +22,7 @@
     "port": 4096,
     "command": "opencode",
     "configPath": "C:\\Users\\<YourUser>\\.config\\opencode\\opencode.json",
+    "transport": "cli",
     "defaultModel": "opencode/MiMo-V2-Pro-Free",
     "packs": {
       "browser": true,
@@ -36,7 +37,9 @@
     "chromeProfileDir": "C:\\Users\\<YourUser>\\AppData\\Local\\Google\\Chrome\\User Data\\Default",
     "playwrightProfileDir": ".\\profiles\\playwright",
     "locale": "en-US",
-    "timezone": "UTC"
+    "timezone": "UTC",
+    "debugPort": 9222,
+    "keepOpen": true
   },
   "windowsUse": {
     "enabled": false,

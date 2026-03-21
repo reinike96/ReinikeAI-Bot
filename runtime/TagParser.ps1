@@ -245,6 +245,17 @@ function Convert-AIResponseToActions {
         return @($inlineStructuredItems)
     }
 
+    $trimmedResponse = $Response.Trim()
+    if ($trimmedResponse -match '(?is)^\[OPENCODE:\s*(.+?)\s*\|\s*([\s\S]+)\]$') {
+        return @([PSCustomObject]@{
+            Kind       = "action"
+            ActionType = "OPENCODE"
+            Raw        = $trimmedResponse
+            Route      = $Matches[1].Trim()
+            Task       = $Matches[2].Trim()
+        })
+    }
+
     $tagPattern = '(?is)\[BUTTONS:.*?(?=\]\]|\]$)(?:\]\]|\])|\[(OPENCODE|CMD|SCREENSHOT|STATUS|PW_CONTENT|PW_SCREENSHOT).*?\]'
     $matches = [regex]::Matches($Response, $tagPattern)
     $lastPos = 0

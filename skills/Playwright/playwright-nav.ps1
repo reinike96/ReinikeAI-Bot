@@ -1,6 +1,6 @@
 param (
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Screenshot", "GetContent", "Download", "SearchGoogle", "GetScreenshot", "GoogleTopResultsScreenshots")]
+    [ValidateSet("Screenshot", "GetContent", "Download", "SearchGoogle", "GetScreenshot", "GoogleTopResultsScreenshots", "KeepOpen")]
     [string]$Action,
 
     [Parameter(Mandatory = $true)]
@@ -30,6 +30,61 @@ function Resolve-ExecutablePath {
             }
         }
         catch {}
+
+        if (Test-Path $candidate) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+
+    foreach ($candidate in $Candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        try {
+            $whereResult = & where.exe $candidate 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $resolved = @($whereResult | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -First 1
+                if ($resolved -and (Test-Path $resolved)) {
+                    return $resolved
+                }
+            }
+        }
+        catch {}
+    }
+
+    $fallbackPaths = @()
+    foreach ($candidate in $Candidates) {
+        switch -Regex ($candidate.ToLowerInvariant()) {
+            '^node(\.exe)?$' {
+                $fallbackPaths += @(
+                    'C:\Program Files\nodejs\node.exe',
+                    (Join-Path ${env:ProgramFiles(x86)} 'nodejs\node.exe')
+                )
+            }
+            '^python(\.exe)?$' {
+                $fallbackPaths += @(
+                    'C:\Python313\python.exe',
+                    'C:\Python312\python.exe',
+                    'C:\Python311\python.exe',
+                    (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\python.exe'),
+                    (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\python.exe'),
+                    (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python311\python.exe')
+                )
+            }
+            '^py(\.exe)?$' {
+                $fallbackPaths += @(
+                    'C:\Windows\py.exe',
+                    'C:\Windows\System32\py.exe'
+                )
+            }
+        }
+    }
+
+    foreach ($path in @($fallbackPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        if (Test-Path $path) {
+            return $path
+        }
     }
 
     return $null
@@ -83,6 +138,10 @@ $env:CHROME_PROFILE_DIR = $botConfig.Browser.ChromeProfileDir
 $env:PLAYWRIGHT_PROFILE_DIR = $botConfig.Browser.PlaywrightProfileDir
 $env:BROWSER_LOCALE = $botConfig.Browser.Locale
 $env:BROWSER_TIMEZONE = $botConfig.Browser.Timezone
+$env:BROWSER_DEBUG_PORT = "$($botConfig.Browser.DebugPort)"
+$env:BROWSER_KEEP_OPEN = if ([bool]$botConfig.Browser.KeepOpen) { "true" } else { "false" }
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
 $env:BOT_PROJECT_ROOT = $projectRoot
 $nodeExe = Resolve-ExecutablePath -Candidates @("node.exe", "node")
 $pythonExe = Resolve-ExecutablePath -Candidates @("python.exe", "python", "py.exe", "py")

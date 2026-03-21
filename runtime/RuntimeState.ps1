@@ -76,10 +76,10 @@ function Add-ActiveProcess {
 }
 
 function Remove-ActiveProcessByPid {
-    param([int]$Pid)
+    param([int]$TargetPid)
 
     $ctx = Get-RuntimeContext
-    $ctx.ActiveProcesses = @($ctx.ActiveProcesses | Where-Object { [int]$_.Pid -ne $Pid })
+    $ctx.ActiveProcesses = @($ctx.ActiveProcesses | Where-Object { [int]$_.Pid -ne $TargetPid })
 }
 
 function Get-PendingChats {

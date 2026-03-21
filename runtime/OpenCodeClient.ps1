@@ -42,6 +42,8 @@ function Get-TaskCheckpointKeywords {
         'usar','using','used','need','necesito','tarea','task','google','pagina','pages','page','resultados',
         'results','captura','capturas','screenshot','screenshots','browser','playwright','agent','build','archives',
         'primera','segunda','tercera','first','second','third','buscar','busca','search','links','enlace','enlaces',
+        'linkedin','post','posts','draft','borrador','contenido','content','instrucciones','instructions',
+        'publicar','publish','manualmente','manually','composer','feed',
         'retoma','reanuda','resume','continue','continua','retry','again','user','usuario','guardar','save'
     )
 
@@ -140,6 +142,39 @@ function Read-TaskCheckpoint {
     catch {
         return $null
     }
+}
+
+function Convert-ToCheckpointStringArray {
+    param(
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    if ($Value -is [string]) {
+        if ([string]::IsNullOrWhiteSpace($Value)) {
+            return @()
+        }
+        return @($Value)
+    }
+
+    $items = @()
+    foreach ($entry in @($Value)) {
+        if ($null -eq $entry) {
+            continue
+        }
+
+        $text = "$entry".Trim()
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            continue
+        }
+
+        $items += $text
+    }
+
+    return @($items)
 }
 
 function Write-TaskCheckpoint {
@@ -260,9 +295,15 @@ function Resolve-TaskCheckpoint {
             continue
         }
 
-        $candidateKeywords = @($candidateData.extractedFacts + $candidateData.completedSteps + $candidateData.pendingSteps + (Get-TaskCheckpointKeywords -TaskText $candidateData.subject) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $candidateKeywordSeed = @(
+            (Convert-ToCheckpointStringArray -Value $candidateData.extractedFacts) +
+            (Convert-ToCheckpointStringArray -Value $candidateData.completedSteps) +
+            (Convert-ToCheckpointStringArray -Value $candidateData.pendingSteps) +
+            (Get-TaskCheckpointKeywords -TaskText $candidateData.subject)
+        )
+        $candidateKeywords = @($candidateKeywordSeed | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
         $overlap = @($taskKeywords | Where-Object { $candidateKeywords -contains $_ } | Select-Object -Unique)
-        $shouldReuse = ($TaskText -match $resumePattern -and $candidateData.status -ne "completed") -or ($overlap.Count -ge 2)
+        $shouldReuse = ($TaskText -match $resumePattern -and $candidateData.status -ne "completed") -or ($overlap.Count -ge 4)
         if ($shouldReuse) {
             return [PSCustomObject]@{
                 Path = $candidate.FullName
@@ -321,9 +362,22 @@ function Update-TaskCheckpointState {
         $fileMatches = [regex]::Matches($ResultText, '([a-zA-Z]:\\[^:<>|"?\r\n]+\.(png|jpg|jpeg|pdf|docx|txt|zip|xlsx|csv))') | ForEach-Object { $_.Groups[1].Value }
         $factMatches = [regex]::Matches($ResultText, '(?im)^(?:- |\* |\d+\.\s+)(.+)$') | ForEach-Object { $_.Groups[1].Value.Trim() }
 
-        $mutable.discoveredUrls = @($mutable.discoveredUrls + $urlMatches | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
-        $mutable.discoveredFiles = @($mutable.discoveredFiles + $fileMatches | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
-        $mutable.extractedFacts = @($mutable.extractedFacts + $factMatches | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 20 -Unique)
+        $urlSeed = @(
+            (Convert-ToCheckpointStringArray -Value $mutable.discoveredUrls) +
+            (Convert-ToCheckpointStringArray -Value $urlMatches)
+        )
+        $fileSeed = @(
+            (Convert-ToCheckpointStringArray -Value $mutable.discoveredFiles) +
+            (Convert-ToCheckpointStringArray -Value $fileMatches)
+        )
+        $factSeed = @(
+            (Convert-ToCheckpointStringArray -Value $mutable.extractedFacts) +
+            (Convert-ToCheckpointStringArray -Value $factMatches)
+        )
+
+        $mutable.discoveredUrls = @($urlSeed | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        $mutable.discoveredFiles = @($fileSeed | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        $mutable.extractedFacts = @($factSeed | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 20 -Unique)
     }
 
     Write-TaskCheckpoint -CheckpointPath $CheckpointPath -Data $mutable
@@ -637,12 +691,13 @@ function Invoke-OpenRouter {
             }
 
             $rawContent = $response.choices[0].message.content
-            if ([string]::IsNullOrWhiteSpace($rawContent)) {
+            $normalizedContent = Convert-OpenRouterContentToText -Content $rawContent
+            if ([string]::IsNullOrWhiteSpace($normalizedContent)) {
                 Write-DailyLog -message "OpenRouter returned empty content (attempt $attempt). $model" -type "WARN"
                 if ($attempt -lt $maxAttempts) { Start-Sleep -Seconds 2; continue }
                 return ""
             }
-            return $rawContent
+            return $normalizedContent
         }
         catch {
             $errDetails = if ($_.Exception) { $_.Exception.Message } else { $_.ToString() }
@@ -662,6 +717,69 @@ function Invoke-OpenRouter {
     }
 }
 
+function Convert-OpenRouterContentToText {
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        $Content
+    )
+
+    if ($null -eq $Content) {
+        return ""
+    }
+
+    if ($Content -is [string]) {
+        return $Content
+    }
+
+    if ($Content -is [array]) {
+        $parts = @()
+        foreach ($item in $Content) {
+            if ($null -eq $item) {
+                continue
+            }
+
+            if ($item -is [string]) {
+                $parts += $item
+                continue
+            }
+
+            if ($item.PSObject.Properties["text"] -and -not [string]::IsNullOrWhiteSpace("$($item.text)")) {
+                $parts += "$($item.text)"
+                continue
+            }
+
+            if ($item.PSObject.Properties["content"] -and -not [string]::IsNullOrWhiteSpace("$($item.content)")) {
+                $parts += "$($item.content)"
+                continue
+            }
+
+            try {
+                $parts += ($item | ConvertTo-Json -Depth 10 -Compress)
+            }
+            catch {
+                $parts += "$item"
+            }
+        }
+
+        return ($parts -join "`n").Trim()
+    }
+
+    if ($Content.PSObject.Properties["text"] -and -not [string]::IsNullOrWhiteSpace("$($Content.text)")) {
+        return "$($Content.text)"
+    }
+
+    if ($Content.PSObject.Properties["content"] -and -not [string]::IsNullOrWhiteSpace("$($Content.content)")) {
+        return (Convert-OpenRouterContentToText -Content $Content.content)
+    }
+
+    try {
+        return ($Content | ConvertTo-Json -Depth 10 -Compress)
+    }
+    catch {
+        return "$Content"
+    }
+}
+
 function Start-OpenCodeJob {
     param(
         [string]$TaskDescription,
@@ -671,14 +789,210 @@ function Start-OpenCodeJob {
         [string]$Agent = $null,
         [int]$TimeoutSec = 1200
     )
+    $requestedModel = $Model
     if ([string]::IsNullOrWhiteSpace($Model)) {
         $Model = $botConfig.OpenCode.DefaultModel
     }
-    [void](Start-OpenCodeServerIfNeeded -BotConfig $botConfig)
+    $transport = "cli"
+    if ($botConfig.OpenCode -and $botConfig.OpenCode.PSObject.Properties["Transport"] -and -not [string]::IsNullOrWhiteSpace("$($botConfig.OpenCode.Transport)")) {
+        $transport = "$($botConfig.OpenCode.Transport)".Trim().ToLowerInvariant()
+    }
     $checkpointInfo = Resolve-TaskCheckpoint -BotConfig $botConfig -ChatId $ChatId -TaskText $TaskDescription
     $sessionDiagnosticsPath = Initialize-OpenCodeSessionDiagnostics -BotConfig $botConfig -ChatId $ChatId -TaskText $TaskDescription
     Update-TaskCheckpointState -CheckpointPath $checkpointInfo.Path -TaskText $TaskDescription -Status "running" -LastAction "Task delegated to OpenCode"
     $checkpointPrompt = Get-CheckpointStateForPrompt -CheckpointData $checkpointInfo.Data
+
+    if ($transport -ne "http") {
+        $heartbeatId = [Guid]::NewGuid().ToString("N")
+        $heartbeatPath = Join-Path $workDir "heartbeat_$heartbeatId.json"
+        $cliModel = if ([string]::IsNullOrWhiteSpace($requestedModel)) { "" } else { $requestedModel.Trim() }
+        $jobScript = {
+            param($taskDescription, $workDir, $archivesDir, $heartbeatPath, $enableMCPs, $modelStr, $agentStr, $timeoutSeconds, $openCodeCommand, $openCodeApiKey, $checkpointPath, $checkpointPrompt, $sessionDiagnosticsPath)
+            Add-Type -AssemblyName System.Net.Http
+            function Write-DailyLog {
+                param([string]$message, [string]$type = "INFO")
+                $logFile = "$workDir\subagent_events.log"
+                $currentDate = Get-Date -Format "yyyy-MM-dd"
+                $timestamp = Get-Date -Format "HH:mm:ss"
+                if (Test-Path $logFile) {
+                    $lastWrite = (Get-Item $logFile).LastWriteTime.ToString("yyyy-MM-dd")
+                    if ($lastWrite -ne $currentDate) { Clear-Content $logFile -ErrorAction SilentlyContinue }
+                }
+                $sanitized = $message
+                $redactionPatterns = @(
+                    '(?i)\b\d{8,10}:[A-Za-z0-9_-]{20,}\b',
+                    '(?i)\b(sk-or-v1|sk-[A-Za-z0-9_-]+)[A-Za-z0-9_-]*\b',
+                    '(?i)(Authorization["'':=\s]+Bearer\s+)[^\s]+',
+                    '(?i)(serverPassword["'':=\s]+)[^\s,;]+',
+                    '(?i)(openRouterApiKey["'':=\s]+)[^\s,;]+',
+                    '(?i)(apiKey["'':=\s]+)[^\s,;]+'
+                )
+                foreach ($pattern in $redactionPatterns) {
+                    $sanitized = [regex]::Replace($sanitized, $pattern, '$1[REDACTED]')
+                }
+                "[$currentDate $timestamp] [$type] $sanitized" | Out-File -FilePath $logFile -Append -Encoding UTF8
+            }
+
+            function Append-SessionDiagnostics {
+                param([string]$Title, [string]$Body)
+
+                if ([string]::IsNullOrWhiteSpace($sessionDiagnosticsPath)) {
+                    return
+                }
+
+                $header = "## $Title`n"
+                $content = if ([string]::IsNullOrWhiteSpace($Body)) { "(empty)" } else { $Body.Trim() }
+                Add-Content -Path $sessionDiagnosticsPath -Value ($header + $content + "`n") -Encoding UTF8
+            }
+
+            function Write-Heartbeat {
+                param([string]$status)
+
+                @{ timestamp = (Get-Date).ToString("o"); status = $status } | ConvertTo-Json -Compress | Set-Content $heartbeatPath -Encoding UTF8
+            }
+
+            $taskText = @"
+Working directory: $workDir
+Output directory for created files: $archivesDir
+Task: $taskDescription
+
+IMPORTANT: Any file you create must be saved in the output directory ($archivesDir). Do not create generated files in the project root ($workDir).
+
+CHECKPOINT FILE:
+$checkpointPath
+
+CHECKPOINT RULES:
+1. Read the checkpoint file first if it exists and continue from the saved state.
+2. Do not repeat steps already marked as completed unless a real recovery step requires it.
+3. After every durable milestone, update the checkpoint JSON with: status, completedSteps, pendingSteps, discoveredUrls, discoveredFiles, extractedFacts, lastAction, and lastError if any.
+4. If you already reached a page, extracted links, opened a document, or produced partial output, write that state to the checkpoint before moving on.
+5. If the task is retried later, use the checkpoint to resume directly instead of starting from scratch.
+
+CURRENT CHECKPOINT STATE:
+$checkpointPrompt
+"@.Trim()
+
+            try {
+                Set-Location -Path $workDir
+                if (-not [string]::IsNullOrWhiteSpace($openCodeApiKey)) {
+                    $env:OPENCODE_API_KEY = $openCodeApiKey
+                }
+
+                $modelLabel = if ([string]::IsNullOrWhiteSpace($modelStr)) { "(opencode default)" } else { $modelStr }
+                $agentLabel = if ([string]::IsNullOrWhiteSpace($agentStr)) { "(none)" } else { $agentStr }
+                Write-DailyLog -message "OpenCode CLI starting task: $taskDescription" -type "OPENCODE"
+                Write-DailyLog -message "OpenCode CLI configuration: agent_hint='$agentLabel' model='$modelLabel' timeout='${timeoutSeconds}s'" -type "OPENCODE"
+                $cliMetadata = @(
+                    "- transport: cli",
+                    "- agentHint: $agentLabel",
+                    "- model: $modelLabel",
+                    "- timeoutSeconds: $timeoutSeconds"
+                ) -join "`n"
+                Append-SessionDiagnostics -Title "CLI Metadata" -Body $cliMetadata
+                Write-Heartbeat -status "starting_cli"
+
+                $opencodeArgs = @("run", $taskText)
+                if (-not [string]::IsNullOrWhiteSpace($modelStr)) {
+                    $opencodeArgs += @("--model", $modelStr)
+                }
+
+                $innerJob = Start-Job -ScriptBlock {
+                    param($commandName, $argsList, $jobWorkDir, $jobApiKey)
+                    Set-Location -Path $jobWorkDir
+                    if (-not [string]::IsNullOrWhiteSpace($jobApiKey)) {
+                        $env:OPENCODE_API_KEY = $jobApiKey
+                    }
+                    & $commandName @argsList 2>&1 | Out-String
+                } -ArgumentList $openCodeCommand, $opencodeArgs, $workDir, $openCodeApiKey
+
+                $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+                while ($true) {
+                    $finished = Wait-Job -Job $innerJob -Timeout 5
+                    if ($finished) {
+                        break
+                    }
+
+                    if ((Get-Date) -ge $deadline) {
+                        Stop-Job -Job $innerJob -ErrorAction SilentlyContinue | Out-Null
+                        Remove-Job -Job $innerJob -Force -ErrorAction SilentlyContinue
+                        Write-DailyLog -message "OpenCode CLI timed out after ${timeoutSeconds}s" -type "WARN"
+                        Append-SessionDiagnostics -Title "Timeout" -Body "The CLI execution exceeded ${timeoutSeconds}s."
+                        return "[ERROR_TIMEOUT] OpenCode did not finish within $timeoutSeconds seconds."
+                    }
+
+                    Write-Heartbeat -status "running_cli"
+                }
+
+                $result = Receive-Job -Job $innerJob -ErrorAction SilentlyContinue
+                $childErrors = $innerJob.ChildJobs | ForEach-Object { $_.Error } | Where-Object { $null -ne $_ }
+                Remove-Job -Job $innerJob -Force -ErrorAction SilentlyContinue
+
+                $resultText = ($result | Out-String).Trim()
+                if ($childErrors) {
+                    $errText = ($childErrors | ForEach-Object { "$_" }) -join "; "
+                    if ([string]::IsNullOrWhiteSpace($resultText)) {
+                        $resultText = "[ERROR_OPENCODE] $errText"
+                    }
+                }
+
+                if ($resultText -match 'insufficient credits|no credits|balance empty|Payment Required|credit limit|rate limit exceeded|out of credits') {
+                    Write-DailyLog -message "OpenCode CLI insufficient credits: $resultText" -type "ERROR"
+                    return "[ERROR_OPENCODE_CREDITS] OpenCode has insufficient credits. Please check your balance."
+                }
+
+                if ($resultText -match '\[CANNOT_COMPLETE:\s*(.+?)\]') {
+                    $reason = $Matches[1]
+                    Write-DailyLog -message "OpenCode CLI cannot complete task: $reason" -type "WARN"
+                    Append-SessionDiagnostics -Title "Completion Error" -Body $reason
+                    return "[ERROR_OPENCODE] The model reported it cannot complete this task: $reason"
+                }
+
+                if ([string]::IsNullOrWhiteSpace($resultText)) {
+                    Write-DailyLog -message "OpenCode CLI returned an empty response." -type "WARN"
+                    Append-SessionDiagnostics -Title "Empty Response" -Body "(empty)"
+                    return "[ERROR_OPENCODE] Empty response"
+                }
+
+                $preview = $resultText.Substring(0, [Math]::Min(180, $resultText.Length)).Replace("`r", " ").Replace("`n", " ")
+                Write-DailyLog -message "OpenCode CLI response OK: len=$($resultText.Length) preview='$preview'" -type "OPENCODE"
+                Append-SessionDiagnostics -Title "Final Response Preview" -Body $preview
+                Write-Heartbeat -status "completed"
+                return $resultText
+            }
+            catch {
+                Write-DailyLog -message "Error in OpenCode CLI: $_" -type "ERROR"
+                Append-SessionDiagnostics -Title "Unhandled Orchestrator Error" -Body "$($_.Exception.Message)"
+                return "[ERROR_OPENCODE] $($_.Exception.Message)"
+            }
+            finally {
+                if (Test-Path $heartbeatPath) { Remove-Item $heartbeatPath -Force -ErrorAction SilentlyContinue }
+            }
+        }
+
+        $job = Start-Job -ScriptBlock $jobScript -ArgumentList $TaskDescription, $workDir, $archivesDir, $heartbeatPath, $EnableMCPs, $cliModel, $Agent, $TimeoutSec, $botConfig.OpenCode.Command, $botConfig.OpenCode.ApiKey, $checkpointInfo.Path, $checkpointPrompt, $sessionDiagnosticsPath
+        $labelSuffix = if ($EnableMCPs.Count -gt 0) { " (MCP: $($EnableMCPs -join ','))" } else { "" }
+        if ($Agent) { $labelSuffix += " [Agent hint: $Agent]" }
+        return @{
+            Job          = $job
+            ChatId       = $ChatId
+            Task         = $TaskDescription
+            Label        = "OpenCode CLI$labelSuffix"
+            Type         = "OpenCode"
+            Transport    = "cli"
+            StartTime    = Get-Date
+            LastTyping   = $null
+            LastReport   = Get-Date
+            LastStatusId = $null
+            OutputBuffer = @()
+            TimeoutSec   = $TimeoutSec
+            CheckpointPath = $checkpointInfo.Path
+            CheckpointReason = $checkpointInfo.Reason
+            SessionDiagnosticsPath = $sessionDiagnosticsPath
+            HeartbeatPath = $heartbeatPath
+        }
+    }
+
+    [void](Start-OpenCodeServerIfNeeded -BotConfig $botConfig)
     $jobScript = {
         param($taskDescription, $workDir, $archivesDir, $jobId, $enableMCPs, $modelStr, $agentStr, $timeoutSeconds, $openCodeHost, $openCodePort, $openCodePassword, $checkpointPath, $checkpointPrompt, $sessionDiagnosticsPath)
         Add-Type -AssemblyName System.Net.Http
@@ -745,26 +1059,38 @@ function Start-OpenCodeJob {
             }
             $sessionBytes = [System.Text.Encoding]::UTF8.GetBytes(($sessionBody | ConvertTo-Json -Compress))
 
-            try {
-                $sessionCreateTimeout = [Math]::Max(60, [Math]::Min([int]$maxTimeout, 120))
-                $sessionResp = Invoke-RestMethod -Uri "$openCodeUrl/session" -Method Post -Headers $headers -Body $sessionBytes -TimeoutSec $sessionCreateTimeout
-                $sessionId = $sessionResp.id
-            }
-            catch {
-                $errContent = ""
-                if ($_.Exception -and $_.Exception.Response) {
-                    $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-                    $errContent = $reader.ReadToEnd()
-                }
-                $errMsg = $_.Exception.Message + " " + $errContent
+            $sessionCreateTimeout = [Math]::Max(90, [Math]::Min([int]$maxTimeout, 300))
+            $sessionCreateAttempts = 0
+            $sessionCreateMaxAttempts = 2
+            $sessionId = $null
 
-                if ($errMsg -match "insufficient credits|balance|402|Payment Required") {
-                    Write-DailyLog -message "OpenCode insufficient credits: $errMsg" -type "ERROR"
-                    return "[ERROR_OPENCODE_CREDITS] OpenCode has insufficient credits. Please check your balance."
+            while ($sessionCreateAttempts -lt $sessionCreateMaxAttempts -and [string]::IsNullOrWhiteSpace($sessionId)) {
+                $sessionCreateAttempts++
+                try {
+                    $sessionResp = Invoke-RestMethod -Uri "$openCodeUrl/session" -Method Post -Headers $headers -Body $sessionBytes -TimeoutSec $sessionCreateTimeout
+                    $sessionId = $sessionResp.id
                 }
+                catch {
+                    $errContent = ""
+                    if ($_.Exception -and $_.Exception.Response) {
+                        $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                        $errContent = $reader.ReadToEnd()
+                    }
+                    $errMsg = $_.Exception.Message + " " + $errContent
 
-                Write-DailyLog -message "Error creating OpenCode session: $errMsg" -type "ERROR"
-                return "[ERROR_OPENCODE] Could not create the session: $($_.Exception.Message)"
+                    if ($errMsg -match "insufficient credits|balance|402|Payment Required") {
+                        Write-DailyLog -message "OpenCode insufficient credits: $errMsg" -type "ERROR"
+                        return "[ERROR_OPENCODE_CREDITS] OpenCode has insufficient credits. Please check your balance."
+                    }
+
+                    Write-DailyLog -message "Error creating OpenCode session (attempt ${sessionCreateAttempts}/${sessionCreateMaxAttempts}): $errMsg" -type "ERROR"
+                    if ($sessionCreateAttempts -lt $sessionCreateMaxAttempts) {
+                        Start-Sleep -Seconds 5
+                    }
+                    else {
+                        return "[ERROR_OPENCODE] Could not create the session: $($_.Exception.Message)"
+                    }
+                }
             }
 
             if ([string]::IsNullOrWhiteSpace($sessionId)) {
@@ -895,6 +1221,7 @@ $checkpointPrompt
         Task         = $TaskDescription
         Label        = "OpenCode HTTP$labelSuffix"
         Type         = "OpenCode"
+        Transport    = "http"
         StartTime    = Get-Date
         LastTyping   = $null
         LastReport   = Get-Date

@@ -1,6 +1,6 @@
 # Skill: Playwright CLI
 
-**Purpose:** Browser automation using a configurable Chrome profile and a reusable Playwright profile.
+**Purpose:** Browser automation for cases where a real browser is required, not a default tool for public-site research.
 
 ## Core Commands
 
@@ -15,6 +15,12 @@ Use this for **ANY** Google search. It is human-like and bypasses CAPTCHAs.
 ### 3. EXTRACT CONTENT (TEXT ONLY)
 `powershell -File ".\skills\Playwright\playwright-nav.ps1" -Action GetContent -Url "https://example.com" -Stealth`
 
+### 4. INTERACTIVE SOCIAL DRAFTS
+Use these local wrappers for logged-in social composition workflows that must leave the browser open with the draft ready:
+- LinkedIn: `powershell -File ".\skills\Playwright\Invoke-LinkedInDraft.ps1" -TaskFile "C:\path\to\task.txt"`
+- X.com: `powershell -File ".\skills\Playwright\Invoke-XDraft.ps1" -TaskFile "C:\path\to\task.txt"`
+- Generic website workflow: `powershell -File ".\skills\Playwright\Invoke-WebInteractive.ps1" -TaskFile "C:\path\to\task.txt"`
+
 ---
 
 ## 🚨 MANDATORY RULES FOR REINIKEAI (ORCHESTRATOR) 🚨
@@ -26,6 +32,11 @@ Use this for **ANY** Google search. It is human-like and bypasses CAPTCHAs.
 5. **BE PATIENT:** Persistent browser startup can take time. Do not use aggressive timeouts.
 6. **NO CONFLICT:** This works even if you have Chrome open. Feel free to use it.
 7. **DO NOT RESET PROFILES:** Never delete or manually reset the configured persistent Playwright profile directory.
+8. **SESSION REUSE:** The local browser session is expected to stay open and be reused across related actions unless `browser.keepOpen` is explicitly disabled in config.
+9. **DO NOT CLAIM SUCCESS WITHOUT VERIFICATION:** For interactive UI workflows, only report success after verifying the modal/editor is visible and the expected text is actually present.
+10. **RESEARCH FIRST:** If the task is to discover the latest post, inspect a public site, or find data hidden in scripts/feeds/assets, do not jump to Playwright. Prefer fetch/HTML/JS/RSS/JSON inspection first, then use Playwright only for the final interaction step if still needed.
+11. **DO NOT GUESS ROUTES:** Before trying `/blog`, `/insights`, language paths, or other guessed URLs, inspect the root page and its raw HTML first.
+12. **SPA RULE:** If the site behaves like a shell page or dynamic app, look for referenced JS/data assets and fetch targets before opening a browser.
 
 ---
 

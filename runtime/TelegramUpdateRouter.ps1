@@ -174,6 +174,10 @@ function Invoke-TelegramCallbackRoute {
             if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
                 $scopeText = Get-LastMeaningfulUserRequest -ChatId "$chatId"
                 Set-WindowsUseApproval -ChatId "$chatId" -UserId "$userId" -Command "$($pending.Command)" -ScopeText $scopeText
+                Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: The user explicitly approved the orchestrator's native confirmation for this Windows-Use action. The action is authorized and is now executing. Do not ask for confirmation again unless a new sensitive action is proposed."
+            }
+            else {
+                Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: The user explicitly approved the orchestrator's native confirmation for this sensitive command. The action is authorized and is now executing. Do not ask for confirmation again unless a new sensitive action is proposed."
             }
 
             if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
@@ -243,6 +247,7 @@ function Invoke-TelegramCallbackRoute {
             $newJob.Capability = $pending.Capability
             $newJob.CapabilityRisk = $pending.CapabilityRisk
             $newJob.ExecutionMode = $pending.ExecutionMode
+            Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: The user explicitly approved the orchestrator's native confirmation for the pending OpenCode task. The task is authorized and is now executing."
             Add-ActiveJob -JobRecord $newJob
             Write-JobsFile
             Update-TelegramStatus -job $newJob -text "🤖 Ejecutando tarea aprobada de OpenCode ($($pending.Capability))."

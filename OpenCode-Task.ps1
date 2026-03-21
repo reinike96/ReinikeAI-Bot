@@ -12,19 +12,22 @@ Set-Location -Path $workDir
 $botConfig = Import-BotSettings -ProjectRoot $workDir
 
 $ocCmd = $botConfig.OpenCode.Command
-if ([string]::IsNullOrWhiteSpace($Model)) {
-    $Model = $botConfig.OpenCode.DefaultModel
-}
+$requestedModel = $Model
+$modelLabel = if ([string]::IsNullOrWhiteSpace($requestedModel)) { "(opencode default)" } else { $requestedModel }
 
-Write-Host "[OpenCode-Task] Starting (timeout: ${TimeoutMinutes} min, model: $Model)..." -ForegroundColor Cyan
+Write-Host "[OpenCode-Task] Starting (timeout: ${TimeoutMinutes} min, model: $modelLabel)..." -ForegroundColor Cyan
 
 try {
     # The job is simple now because the config already lives on disk.
     $job = Start-Job -ScriptBlock {
         param($ocCmd, $Task, $Model, $workDir)
         Set-Location $workDir
-        & $ocCmd run $Task --model $Model --session TelegramSession
-    } -ArgumentList $ocCmd, $Task, $Model, $workDir
+        $argsList = @("run", $Task)
+        if (-not [string]::IsNullOrWhiteSpace($Model)) {
+            $argsList += @("--model", $Model)
+        }
+        & $ocCmd @argsList
+    } -ArgumentList $ocCmd, $Task, $requestedModel, $workDir
 
     $finished = Wait-Job $job -Timeout ($TimeoutMinutes * 60)
 

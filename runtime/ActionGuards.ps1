@@ -77,3 +77,66 @@ function Invoke-OpenCodeTaskGuard {
     Add-ChatMemory -chatId $ChatId -role "user" -content "[SYSTEM CRITICAL]: You already ran this task after the user's latest request and the result is already above. Do not repeat it. If the user asked to retry, change the task text slightly."
 }
 
+function Get-LatestRealUserPrompt {
+    param(
+        [string]$ChatId
+    )
+
+    $history = Get-ChatMemory -chatId $ChatId
+    for ($i = $history.Count - 1; $i -ge 0; $i--) {
+        $entry = $history[$i]
+        if ($entry.role -ne "user") {
+            continue
+        }
+
+        $contentText = "$($entry.content)"
+        if ([string]::IsNullOrWhiteSpace($contentText)) {
+            continue
+        }
+        if ($contentText -match '^\[(SYSTEM|BUTTON PRESSED|UNTRUSTED WEB CONTENT|SYSTEM - CMD RESULT)') {
+            continue
+        }
+
+        return $contentText
+    }
+
+    return ""
+}
+
+function Test-ShouldBlockPWContentAction {
+    param(
+        [string]$ChatId,
+        [string]$Url
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ChatId) -or [string]::IsNullOrWhiteSpace($Url)) {
+        return $false
+    }
+
+    $userPrompt = (Get-LatestRealUserPrompt -ChatId $ChatId).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($userPrompt)) {
+        return $false
+    }
+
+    $mentionsDiscovery = $userPrompt -match 'latest|newest|most recent|ultimo|último|encuentra|find|busca|discover|discovery|inspect|inspecciona|inspecta|explora|explore'
+    $mentionsSiteContent = $userPrompt -match 'blog|article|articulo|artículo|news|noticia|post|website|site|sitio|pagina|página'
+    if (-not ($mentionsDiscovery -and $mentionsSiteContent)) {
+        return $false
+    }
+
+    try {
+        $parsedUrl = [System.Uri]$Url
+        $path = ""
+        if ($null -ne $parsedUrl.AbsolutePath) {
+            $path = "$($parsedUrl.AbsolutePath)".Trim().ToLowerInvariant()
+        }
+        if ([string]::IsNullOrWhiteSpace($path) -or $path -eq "/") {
+            return $false
+        }
+    }
+    catch {
+        return $false
+    }
+
+    return $true
+}

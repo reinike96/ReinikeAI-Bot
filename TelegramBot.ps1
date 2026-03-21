@@ -138,6 +138,90 @@ function Write-DailyLog {
     Write-Host $logEntry -ForegroundColor Gray
 }
 
+function Invoke-DailyArchivesTempCleanup {
+    param(
+        [string]$ArchivesDir
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ArchivesDir)) {
+        return
+    }
+
+    if (-not (Test-Path $ArchivesDir)) {
+        New-Item -ItemType Directory -Force -Path $ArchivesDir | Out-Null
+    }
+
+    $markerPath = Join-Path $ArchivesDir ".daily-temp-cleanup.json"
+    $todayKey = (Get-Date).ToString("yyyy-MM-dd")
+
+    if (Test-Path $markerPath) {
+        try {
+            $marker = Get-Content $markerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ($null -ne $marker -and "$($marker.lastRunDate)" -eq $todayKey) {
+                return
+            }
+        }
+        catch {}
+    }
+
+    $cutoff = (Get-Date).AddDays(-1)
+    $deletedCount = 0
+    $tempPatterns = @(
+        "*-state.json",
+        "*-content.txt",
+        "web-interactive-task.txt",
+        "opencode-session-diagnostics.md"
+    )
+    $tempSubdirs = @(
+        "task-inputs",
+        "checkpoints"
+    )
+
+    foreach ($pattern in $tempPatterns) {
+        foreach ($item in @(Get-ChildItem -Path $ArchivesDir -Filter $pattern -File -ErrorAction SilentlyContinue)) {
+            if ($item.LastWriteTime -lt $cutoff) {
+                try {
+                    Remove-Item -Path $item.FullName -Force -ErrorAction Stop
+                    $deletedCount++
+                }
+                catch {}
+            }
+        }
+    }
+
+    foreach ($subdirName in $tempSubdirs) {
+        $subdirPath = Join-Path $ArchivesDir $subdirName
+        if (-not (Test-Path $subdirPath)) {
+            continue
+        }
+
+        foreach ($item in @(Get-ChildItem -Path $subdirPath -File -Recurse -ErrorAction SilentlyContinue)) {
+            if ($item.LastWriteTime -lt $cutoff) {
+                try {
+                    Remove-Item -Path $item.FullName -Force -ErrorAction Stop
+                    $deletedCount++
+                }
+                catch {}
+            }
+        }
+
+        foreach ($dir in @(Get-ChildItem -Path $subdirPath -Directory -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName -Descending)) {
+            try {
+                if (@(Get-ChildItem -Path $dir.FullName -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+                    Remove-Item -Path $dir.FullName -Force -ErrorAction SilentlyContinue
+                }
+            }
+            catch {}
+        }
+    }
+
+    @{ lastRunDate = $todayKey; deletedCount = $deletedCount; updatedAt = (Get-Date).ToString("o") } |
+        ConvertTo-Json -Compress |
+        Set-Content -Path $markerPath -Encoding UTF8
+
+    Write-DailyLog -message "Daily archives temp cleanup complete. Deleted=$deletedCount cutoff=$($cutoff.ToString('o'))" -type "SYSTEM"
+}
+
 function Invoke-BotShutdown {
     param(
         [string]$Reason = "process exit",
@@ -207,7 +291,8 @@ function Start-ScriptJob {
         [string]$scriptCmd,
         [string]$chatId,
         [string]$taskLabel,
-        [string]$originalTask = ""
+        [string]$originalTask = "",
+        [string]$checkpointPath = ""
     )
     $jobScript = {
         param($cmd, $workDir)
@@ -228,16 +313,24 @@ function Start-ScriptJob {
         ChatId       = $chatId
         Task         = if ($originalTask) { $originalTask } else { $taskLabel }
         Label        = $taskLabel
+        Command      = $scriptCmd
         Type         = "Script"
         StartTime    = Get-Date
         LastTyping   = $null
         LastReport   = Get-Date
         LastStatusId = $null
         OutputBuffer = @()
+        CheckpointPath = $checkpointPath
     }
 }
 
 # --- OpenCode Server Startup ---
+$openCodeTransport = "cli"
+if ($botConfig.OpenCode -and $botConfig.OpenCode.PSObject.Properties["Transport"] -and -not [string]::IsNullOrWhiteSpace("$($botConfig.OpenCode.Transport)")) {
+    $openCodeTransport = "$($botConfig.OpenCode.Transport)".Trim().ToLowerInvariant()
+}
+
+if ($openCodeTransport -eq "http") {
 Write-Host "Starting OpenCode server..." -ForegroundColor Cyan
 
 # Start the server in the background without blocking startup.
@@ -339,6 +432,10 @@ Start-ThreadJob -Name "OpenCodeServer" -ScriptBlock {
     }
     Write-Host "OpenCode server did not respond in time" -ForegroundColor DarkGray
 } -ArgumentList $botConfig.OpenCode.ApiKey, $botConfig.OpenCode.Host, $botConfig.OpenCode.Port, $botConfig.OpenCode.ServerPassword, $botConfig.OpenCode.Command | Out-Null
+}
+else {
+    Write-Host "OpenCode transport: CLI (server startup skipped)" -ForegroundColor Cyan
+}
 
 # Continue immediately while other startup work runs in parallel.
 
@@ -434,9 +531,12 @@ if (-not [string]::IsNullOrWhiteSpace($startupChatId)) {
     Write-Host "[SYSTEM] Startup message sent to $startupChatId" -ForegroundColor Green
 }
 
+Invoke-DailyArchivesTempCleanup -ArchivesDir $archivesDir
+
 try {
     while ($true) {
         try {
+            Invoke-DailyArchivesTempCleanup -ArchivesDir $archivesDir
             Invoke-JobMaintenanceCycle -WorkDir $workDir
 
             # Telegram polling
