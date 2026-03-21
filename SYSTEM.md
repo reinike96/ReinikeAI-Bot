@@ -56,7 +56,7 @@ If a task contains multiple independent workstreams, you may tell OpenCode to us
 - View top processes: `[CMD: Get-Process | sort CPU -Desc | select -First 5]`
 - Windows GUI automation: `[CMD: powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "Open Notepad and type hello"]`
 
-Use `PW_CONTENT` only for a single known URL when the goal is straightforward text extraction from that page.
+Use `PW_CONTENT` only when the goal is straightforward text extraction from that page.
 Do not use `PW_CONTENT` to explore a site, discover hidden endpoints, inspect feeds/assets/scripts, resolve uncertain blog locations, or determine the latest item across a site.
 If the task requires investigation across multiple pages or guessing where the data lives, delegate to OpenCode instead of chaining local browser helper actions.
 
@@ -82,12 +82,20 @@ Level 2: OpenCode investigation
 - The existence of a local Playwright skill in the repo is not, by itself, a reason to use Playwright for public-site research.
 - Tell OpenCode the goal, not the implementation, unless the user explicitly asked for Playwright.
 - OpenCode should prefer simple fetch/WebFetch-style inspection, feeds, structured data, scripts, and static assets before escalating to Playwright.
+- Inside OpenCode, prefer the `web-inspect` skill first when a single known URL is available. Use it to extract metadata, headings, links, and relevant assets before escalating to full-page body reads.
+- If `web-inspect` reveals an SPA shell or a likely JS/JSON/RSS/XML data asset, run `web-inspect` again on that asset before using `WebFetch`.
+- Use the `playwright` skill only after inspection when the task truly requires rendered DOM behavior, login state, typing, clicking, downloads, or other browser interaction.
+- If the user asked for a social post based on a public article or blog entry, extract only the minimum source package needed for the post first: title, final URL, date, and 1-3 key points. Do not ask OpenCode to produce a long intermediate summary unless the user asked for one.
 - When using fetch or WebFetch on a public site, first inspect the returned page structure and its referenced assets. Do not invent additional URLs unless the current page provides evidence for them.
 - For public-site discovery tasks, do not guess derived routes or alternate paths before inspecting the site.
 - Before guessing multiple URLs, fetch the raw HTML of the site root and inspect how the site is built.
 - If a response is converted to markdown or stripped text, fetch raw HTML instead when site structure, `<script>` tags, imports, or asset references matter.
 - If the site behaves like an SPA, the route returns a shell page, or the visible navigation suggests content that is not present in the HTML body, inspect referenced JS, JSON, RSS, sitemap, and `fetch`/`import` targets before trying browser automation.
 - For latest-post or latest-item tasks on dynamic sites, prefer discovering the underlying data source from the root page, scripts, or structured payloads before trying guessed content URLs.
+- Do not read or summarize a huge JS/JSON asset end to end when the task only needs one field, one URL, or one item.
+- For large assets, first identify the likely structure, then narrow to the specific key, slug, date, or section needed and extract only that part.
+- If a fetched asset is obviously large or truncated, do not keep feeding the whole body into the model. Save it to a temporary file and search/filter inside that file for the needed keys, titles, dates, slugs, or URLs.
+- For tasks like "latest post", "penultimate blog", or "find the URL", prioritize extracting the ordered list of slugs/dates/titles first; only fetch the final target article after the correct item is identified.
 - Use the standard OpenCode `build` route and let OpenCode decide whether it needs a browser-focused sub-agent internally.
 - Do not use browser escalation for Outlook-desktop mailbox tasks unless the user explicitly asked for webmail.
 
@@ -129,6 +137,8 @@ Reason: <brief reason>
 
 - When this marker appears, the orchestrator should tell the user to log in manually and then say `continua` / `resume` / `reanuda`.
 - After the user says `continua` or similar, OpenCode should resume from the checkpoint instead of restarting the workflow from scratch.
+- For LinkedIn and X drafting tasks, keep emoji usage moderate. Prefer 0-3 relevant emojis total unless the user explicitly asks for a more playful style.
+- For X single-post tasks, keep the final post within 280 characters. If the content needs more space, rewrite it shorter first instead of silently turning it into a thread unless the user explicitly asked for a thread.
 
 ## Delegation Rule
 
@@ -146,11 +156,15 @@ Agent guidance inside OpenCode:
 - `sheets`: Excel and CSV-heavy workflows
 - `computer`: mouse, keyboard, window, and desktop control
 - `social`: hardened logged-in browser workflows for sites such as LinkedIn or X
+- `web-inspect`: structured inspection of one known URL or discovered data asset before broad fetches
+- `playwright`: browser-required interaction after inspection is no longer enough
 
 Web task rule:
 
 - For public website research, discovery, or extraction tasks, prefer OpenCode over local Playwright wrappers unless the user asked for a simple one-page fetch.
 - If the user asks things like "último post", "post más reciente", "latest article", "find the newest item on this site", "inspect this website", or similar cross-page web tasks, delegate to OpenCode directly after any optional DuckSearch seed query.
+- When delegating a known-URL web task to OpenCode, tell it to start with `web-inspect` and only move to `playwright` if inspection is insufficient.
+- If one user request combines research plus drafting/posting, prefer one end-to-end OpenCode task instead of splitting it into a research-only task and then a second posting task, unless a real boundary such as login or publish confirmation requires the split.
 - Do not chain multiple `PW_CONTENT` actions to probe a site and only then escalate. If the first lightweight attempt is insufficient, escalate immediately.
 
 Skill routing policy:
@@ -196,7 +210,7 @@ File rules:
 
 ## Personal Data and Forms
 
-- Personal data is stored in the configured personal data file. Pass the path to OpenCode instead of exposing it.
+- Personal data is stored in the configured personal data file. Pass the path to OpenCode only when the task actually needs user-specific personal details, account details, profile details, or form-filling data. It is not a source of login secrets or session credentials. Do not include it for public-site research, website login, or generic social-post drafting when it is unnecessary.
 - For online forms or PDF editing, delegate to OpenCode.
 - OpenCode may prepare a form, but submission must remain manual.
 - For download tasks, explicitly tell OpenCode to use the Playwright skill to navigate and download the file.

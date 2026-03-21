@@ -49,7 +49,7 @@ $modelToUse = if ([string]::IsNullOrWhiteSpace($Model)) { $botConfig.WindowsUse.
 $reasoningEffortToUse = if ([string]::IsNullOrWhiteSpace($ReasoningEffort)) { "$($botConfig.WindowsUse.ReasoningEffort)" } else { $ReasoningEffort.Trim() }
 $browserToUse = if ([string]::IsNullOrWhiteSpace($Browser)) { $botConfig.WindowsUse.Browser } else { $Browser.Trim().ToLowerInvariant() }
 $maxStepsToUse = if ($MaxSteps -gt 0) { $MaxSteps } else { [int]$botConfig.WindowsUse.MaxSteps }
-$taskToRun = "Complete the task in one bounded run if possible. When entering text, preserve the exact requested text and prefer exact paste/input over approximate typing when available. Task: $Task"
+$taskToRun = "One bounded run. Preserve exact requested text. Prefer exact paste/input over approximate typing. Task: $Task"
 
 if ([string]::IsNullOrWhiteSpace($providerToUse)) {
     Write-Error "No Windows-Use provider configured."

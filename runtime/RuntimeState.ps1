@@ -14,6 +14,7 @@ function Initialize-RuntimeState {
     $script:RuntimeContext = [ordered]@{
         CurrentMainModel       = $BotConfig.LLM.PrimaryModel
         SecondaryMainModel     = $BotConfig.LLM.SecondaryModel
+        MultimodalModel        = $BotConfig.LLM.MultimodalModel
         CurrentReasoningEffort = $BotConfig.LLM.ReasoningEffort
         ActiveJobs             = @()
         ActiveProcesses        = @()
@@ -30,6 +31,10 @@ function Get-CurrentMainModel {
 
 function Get-SecondaryMainModel {
     return (Get-RuntimeContext).SecondaryMainModel
+}
+
+function Get-MultimodalModel {
+    return (Get-RuntimeContext).MultimodalModel
 }
 
 function Get-CurrentReasoningEffort {

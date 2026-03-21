@@ -127,6 +127,144 @@ function Initialize-OpenCodeSessionDiagnostics {
     return $diagnosticPath
 }
 
+function Get-OpenCodeCliSessionIds {
+    param(
+        [string]$CommandName,
+        [string]$WorkingDirectory,
+        [string]$ApiKey = ""
+    )
+
+    try {
+        Set-Location -Path $WorkingDirectory
+        if (-not [string]::IsNullOrWhiteSpace($ApiKey)) {
+            $env:OPENCODE_API_KEY = $ApiKey
+        }
+
+        $raw = (& $CommandName session list 2>&1 | Out-String)
+        $matches = [regex]::Matches($raw, '(?m)^(ses_[A-Za-z0-9]+)\b')
+        $ids = @()
+        foreach ($match in $matches) {
+            $ids += $match.Groups[1].Value
+        }
+        return @($ids | Select-Object -Unique)
+    }
+    catch {
+        return @()
+    }
+}
+
+function Export-OpenCodeSessionJson {
+    param(
+        [string]$CommandName,
+        [string]$WorkingDirectory,
+        [string]$SessionId,
+        [string]$ApiKey = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SessionId)) {
+        return $null
+    }
+
+    try {
+        Set-Location -Path $WorkingDirectory
+        if (-not [string]::IsNullOrWhiteSpace($ApiKey)) {
+            $env:OPENCODE_API_KEY = $ApiKey
+        }
+
+        $raw = (& $CommandName export $SessionId 2>&1 | Out-String)
+        $jsonStart = $raw.IndexOf('{')
+        if ($jsonStart -lt 0) {
+            return $null
+        }
+
+        $jsonText = $raw.Substring($jsonStart)
+        return ($jsonText | ConvertFrom-Json -Depth 100)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-OpenCodeUsagePayloadFromExport {
+    param(
+        [object]$ExportData
+    )
+
+    if ($null -eq $ExportData -or $null -eq $ExportData.messages) {
+        return $null
+    }
+
+    $inputTokens = 0
+    $outputTokens = 0
+    $reasoningTokens = 0
+    $cacheReadTokens = 0
+    $cacheWriteTokens = 0
+    $totalTokens = 0
+    $cost = 0.0
+
+    foreach ($message in @($ExportData.messages)) {
+        if ($null -eq $message -or $null -eq $message.info) {
+            continue
+        }
+
+        if ("$($message.info.role)" -ne "assistant") {
+            continue
+        }
+
+        $tokens = $message.info.tokens
+        if ($tokens) {
+            $inputTokens += [int]($tokens.input)
+            $outputTokens += [int]($tokens.output)
+            $reasoningTokens += [int]($tokens.reasoning)
+            if ($tokens.cache) {
+                $cacheReadTokens += [int]($tokens.cache.read)
+                $cacheWriteTokens += [int]($tokens.cache.write)
+            }
+            $totalTokens += [int]($tokens.total)
+        }
+
+        if ($message.info.PSObject.Properties["cost"]) {
+            $cost += [double]($message.info.cost)
+        }
+    }
+
+    return [PSCustomObject]@{
+        SessionId = if ($ExportData.info) { "$($ExportData.info.id)" } else { "" }
+        InputTokens = $inputTokens
+        OutputTokens = $outputTokens
+        ReasoningTokens = $reasoningTokens
+        CacheReadTokens = $cacheReadTokens
+        CacheWriteTokens = $cacheWriteTokens
+        TotalTokens = $totalTokens
+        Cost = [Math]::Round($cost, 6)
+    }
+}
+
+function Convert-OpenCodeUsagePayloadToMarker {
+    param(
+        [object]$Usage
+    )
+
+    if ($null -eq $Usage) {
+        return ""
+    }
+
+    $lines = @(
+        "[OPENCODE_USAGE]",
+        "sessionId: $($Usage.SessionId)",
+        "inputTokens: $($Usage.InputTokens)",
+        "outputTokens: $($Usage.OutputTokens)",
+        "reasoningTokens: $($Usage.ReasoningTokens)",
+        "cacheReadTokens: $($Usage.CacheReadTokens)",
+        "cacheWriteTokens: $($Usage.CacheWriteTokens)",
+        "totalTokens: $($Usage.TotalTokens)",
+        "cost: $($Usage.Cost)",
+        "[/OPENCODE_USAGE]"
+    )
+
+    return ($lines -join "`n")
+}
+
 function Read-TaskCheckpoint {
     param(
         [string]$CheckpointPath
@@ -851,22 +989,96 @@ function Start-OpenCodeJob {
                 @{ timestamp = (Get-Date).ToString("o"); status = $status } | ConvertTo-Json -Compress | Set-Content $heartbeatPath -Encoding UTF8
             }
 
+            function Get-OpenCodeCliSessionIds {
+                param([string]$CommandName, [string]$WorkingDirectory, [string]$ApiKey = "")
+                try {
+                    Set-Location -Path $WorkingDirectory
+                    if (-not [string]::IsNullOrWhiteSpace($ApiKey)) { $env:OPENCODE_API_KEY = $ApiKey }
+                    $raw = (& $CommandName session list 2>&1 | Out-String)
+                    $matches = [regex]::Matches($raw, '(?m)^(ses_[A-Za-z0-9]+)\b')
+                    $ids = @()
+                    foreach ($match in $matches) { $ids += $match.Groups[1].Value }
+                    return @($ids | Select-Object -Unique)
+                } catch { return @() }
+            }
+
+            function Export-OpenCodeSessionJson {
+                param([string]$CommandName, [string]$WorkingDirectory, [string]$SessionId, [string]$ApiKey = "")
+                if ([string]::IsNullOrWhiteSpace($SessionId)) { return $null }
+                try {
+                    Set-Location -Path $WorkingDirectory
+                    if (-not [string]::IsNullOrWhiteSpace($ApiKey)) { $env:OPENCODE_API_KEY = $ApiKey }
+                    $raw = (& $CommandName export $SessionId 2>&1 | Out-String)
+                    $jsonStart = $raw.IndexOf('{')
+                    if ($jsonStart -lt 0) { return $null }
+                    $jsonText = $raw.Substring($jsonStart)
+                    return ($jsonText | ConvertFrom-Json -Depth 100)
+                } catch { return $null }
+            }
+
+            function Get-OpenCodeUsagePayloadFromExport {
+                param([object]$ExportData)
+                if ($null -eq $ExportData -or $null -eq $ExportData.messages) { return $null }
+                $inputTokens = 0; $outputTokens = 0; $reasoningTokens = 0; $cacheReadTokens = 0; $cacheWriteTokens = 0; $totalTokens = 0; $cost = 0.0
+                foreach ($message in @($ExportData.messages)) {
+                    if ($null -eq $message -or $null -eq $message.info) { continue }
+                    if ("$($message.info.role)" -ne "assistant") { continue }
+                    $tokens = $message.info.tokens
+                    if ($tokens) {
+                        $inputTokens += [int]($tokens.input)
+                        $outputTokens += [int]($tokens.output)
+                        $reasoningTokens += [int]($tokens.reasoning)
+                        if ($tokens.cache) {
+                            $cacheReadTokens += [int]($tokens.cache.read)
+                            $cacheWriteTokens += [int]($tokens.cache.write)
+                        }
+                        $totalTokens += [int]($tokens.total)
+                    }
+                    if ($message.info.PSObject.Properties["cost"]) { $cost += [double]($message.info.cost) }
+                }
+                return [PSCustomObject]@{
+                    SessionId = if ($ExportData.info) { "$($ExportData.info.id)" } else { "" }
+                    InputTokens = $inputTokens
+                    OutputTokens = $outputTokens
+                    ReasoningTokens = $reasoningTokens
+                    CacheReadTokens = $cacheReadTokens
+                    CacheWriteTokens = $cacheWriteTokens
+                    TotalTokens = $totalTokens
+                    Cost = [Math]::Round($cost, 6)
+                }
+            }
+
+            function Convert-OpenCodeUsagePayloadToMarker {
+                param([object]$Usage)
+                if ($null -eq $Usage) { return "" }
+                @(
+                    "[OPENCODE_USAGE]",
+                    "sessionId: $($Usage.SessionId)",
+                    "inputTokens: $($Usage.InputTokens)",
+                    "outputTokens: $($Usage.OutputTokens)",
+                    "reasoningTokens: $($Usage.ReasoningTokens)",
+                    "cacheReadTokens: $($Usage.CacheReadTokens)",
+                    "cacheWriteTokens: $($Usage.CacheWriteTokens)",
+                    "totalTokens: $($Usage.TotalTokens)",
+                    "cost: $($Usage.Cost)",
+                    "[/OPENCODE_USAGE]"
+                ) -join "`n"
+            }
+
             $taskText = @"
 Working directory: $workDir
 Output directory for created files: $archivesDir
 Task: $taskDescription
 
-IMPORTANT: Any file you create must be saved in the output directory ($archivesDir). Do not create generated files in the project root ($workDir).
+Save created files in $archivesDir, not in the project root.
 
 CHECKPOINT FILE:
 $checkpointPath
 
 CHECKPOINT RULES:
-1. Read the checkpoint file first if it exists and continue from the saved state.
-2. Do not repeat steps already marked as completed unless a real recovery step requires it.
-3. After every durable milestone, update the checkpoint JSON with: status, completedSteps, pendingSteps, discoveredUrls, discoveredFiles, extractedFacts, lastAction, and lastError if any.
-4. If you already reached a page, extracted links, opened a document, or produced partial output, write that state to the checkpoint before moving on.
-5. If the task is retried later, use the checkpoint to resume directly instead of starting from scratch.
+- Read the checkpoint first and resume from it.
+- Do not repeat completed steps unless recovery requires it.
+- After each durable milestone, update the checkpoint JSON with status, completedSteps, pendingSteps, discoveredUrls, discoveredFiles, extractedFacts, lastAction, and lastError if any.
 
 CURRENT CHECKPOINT STATE:
 $checkpointPrompt
@@ -890,6 +1102,7 @@ $checkpointPrompt
                 ) -join "`n"
                 Append-SessionDiagnostics -Title "CLI Metadata" -Body $cliMetadata
                 Write-Heartbeat -status "starting_cli"
+                $sessionIdsBefore = @(Get-OpenCodeCliSessionIds -CommandName $openCodeCommand -WorkingDirectory $workDir -ApiKey $openCodeApiKey)
 
                 $opencodeArgs = @("run", $taskText)
                 if (-not [string]::IsNullOrWhiteSpace($modelStr)) {
@@ -956,8 +1169,27 @@ $checkpointPrompt
                 $preview = $resultText.Substring(0, [Math]::Min(180, $resultText.Length)).Replace("`r", " ").Replace("`n", " ")
                 Write-DailyLog -message "OpenCode CLI response OK: len=$($resultText.Length) preview='$preview'" -type "OPENCODE"
                 Append-SessionDiagnostics -Title "Final Response Preview" -Body $preview
+                $sessionIdsAfter = @(Get-OpenCodeCliSessionIds -CommandName $openCodeCommand -WorkingDirectory $workDir -ApiKey $openCodeApiKey)
+                $newSessionId = @($sessionIdsAfter | Where-Object { $sessionIdsBefore -notcontains $_ } | Select-Object -First 1)
+                if (-not $newSessionId -and $sessionIdsAfter.Count -gt 0) {
+                    $newSessionId = $sessionIdsAfter[0]
+                }
+                $usageMarker = ""
+                if ($newSessionId) {
+                    $exportData = Export-OpenCodeSessionJson -CommandName $openCodeCommand -WorkingDirectory $workDir -SessionId $newSessionId -ApiKey $openCodeApiKey
+                    $usage = Get-OpenCodeUsagePayloadFromExport -ExportData $exportData
+                    if ($usage) {
+                        $usageMarker = Convert-OpenCodeUsagePayloadToMarker -Usage $usage
+                        $usageSummary = "session=$($usage.SessionId) total=$($usage.TotalTokens) input=$($usage.InputTokens) output=$($usage.OutputTokens) reasoning=$($usage.ReasoningTokens) cacheRead=$($usage.CacheReadTokens) cost=$($usage.Cost)"
+                        Write-DailyLog -message "OpenCode CLI usage: $usageSummary" -type "OPENCODE"
+                        Append-SessionDiagnostics -Title "Usage Summary" -Body $usageSummary
+                    }
+                }
                 Write-Heartbeat -status "completed"
-                return $resultText
+                if ([string]::IsNullOrWhiteSpace($usageMarker)) {
+                    return $resultText
+                }
+                return ($resultText.TrimEnd() + "`n`n" + $usageMarker)
             }
             catch {
                 Write-DailyLog -message "Error in OpenCode CLI: $_" -type "ERROR"
@@ -1190,8 +1422,28 @@ $checkpointPrompt
                 $preview = $resultText.Substring(0, [Math]::Min(180, $resultText.Length)).Replace("`r", " ").Replace("`n", " ")
                 Write-DailyLog -message "OpenCode response OK: len=$($resultText.Length) preview='$preview'" -type "OPENCODE"
                 Append-SessionDiagnostics -Title "Final Response Preview" -Body $preview
+                $usageMarker = ""
+                $usage = $null
+                if ($responseObj.PSObject.Properties["messages"]) {
+                    $usage = Get-OpenCodeUsagePayloadFromExport -ExportData $responseObj
+                }
+                elseif ($null -ne $events -and $events.PSObject.Properties["messages"]) {
+                    $usage = Get-OpenCodeUsagePayloadFromExport -ExportData $events
+                }
+                if ($usage) {
+                    if ([string]::IsNullOrWhiteSpace("$($usage.SessionId)")) {
+                        $usage.SessionId = $sessionId
+                    }
+                    $usageMarker = Convert-OpenCodeUsagePayloadToMarker -Usage $usage
+                    $usageSummary = "session=$($usage.SessionId) total=$($usage.TotalTokens) input=$($usage.InputTokens) output=$($usage.OutputTokens) reasoning=$($usage.ReasoningTokens) cacheRead=$($usage.CacheReadTokens) cost=$($usage.Cost)"
+                    Write-DailyLog -message "OpenCode HTTP usage: $usageSummary" -type "OPENCODE"
+                    Append-SessionDiagnostics -Title "Usage Summary" -Body $usageSummary
+                }
                 Write-Heartbeat -jobId $jobId -status "completed"
-                return $resultText
+                if ([string]::IsNullOrWhiteSpace($usageMarker)) {
+                    return $resultText
+                }
+                return ($resultText.TrimEnd() + "`n`n" + $usageMarker)
             }
             else {
                 $rawDebug = $responseObj | ConvertTo-Json -Depth 10 -Compress

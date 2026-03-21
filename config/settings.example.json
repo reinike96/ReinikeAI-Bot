@@ -10,8 +10,9 @@
   },
   "llm": {
     "openRouterApiKey": "PASTE_YOUR_OPENROUTER_API_KEY",
-    "primaryModel": "xiaomi/mimo-v2-omni",
+    "primaryModel": "z-ai/glm-5-turbo",
     "secondaryModel": "qwen/qwen3.5-27b",
+    "multimodalModel": "xiaomi/mimo-v2-omni",
     "reasoningEffort": "medium",
     "responseLanguage": "English"
   },
@@ -23,7 +24,7 @@
     "command": "opencode",
     "configPath": "C:\\Users\\<YourUser>\\.config\\opencode\\opencode.json",
     "transport": "cli",
-    "defaultModel": "opencode/MiMo-V2-Pro-Free",
+    "defaultModel": "opencode/kimi-k2.5",
     "packs": {
       "browser": true,
       "docs": false,
@@ -34,11 +35,11 @@
   },
   "browser": {
     "chromeExecutable": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "chromeProfileDir": "C:\\Users\\<YourUser>\\AppData\\Local\\Google\\Chrome\\User Data\\Default",
+    "chromeProfileDir": "C:\\Users\\<YourUser>\\path\\to\\your\\bot\\profiles\\chrome-bot",
     "playwrightProfileDir": ".\\profiles\\playwright",
     "locale": "en-US",
     "timezone": "UTC",
-    "debugPort": 9222,
+    "debugPort": 9333,
     "keepOpen": true
   },
   "windowsUse": {

@@ -18,6 +18,8 @@
     },
     "agent": {
         "build": {
+            "model": "opencode/kimi-k2.5",
+            "variant": "high",
             "tools": {
                 "playwright_browser_*": false,
                 "file_converter_*": false,
@@ -28,6 +30,8 @@
             }
         },
         "browser": {
+            "model": "opencode/kimi-k2.5",
+            "variant": "high",
             "tools": {
                 "playwright_browser_*": true
             }
@@ -52,6 +56,8 @@
             }
         },
         "social": {
+            "model": "opencode/kimi-k2.5",
+            "variant": "high",
             "tools": {
                 "playwright_browser_*": true,
                 "playwriter_*": false

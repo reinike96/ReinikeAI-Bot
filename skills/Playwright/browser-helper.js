@@ -70,20 +70,63 @@ async function waitForDebugger(debugPort, timeoutMs) {
     return false;
 }
 
-async function ensureManagedChrome({ chromeExecutable, profileDir, debugPort, startUrl }) {
+function isChromeProfileLocked(userDataDir) {
+    if (!userDataDir || !fs.existsSync(userDataDir)) {
+        return false;
+    }
+
+    const lockCandidates = [
+        'SingletonLock',
+        'SingletonCookie',
+        'SingletonSocket',
+        'lockfile'
+    ];
+
+    return lockCandidates.some(name => fs.existsSync(path.join(userDataDir, name)));
+}
+
+function resolveChromeLaunchProfile(projectRoot) {
+    const playwrightProfilePath = process.env.PLAYWRIGHT_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
+    const chromeProfilePath = process.env.CHROME_PROFILE_DIR || '';
+    const candidate = (chromeProfilePath && chromeProfilePath.trim()) ? chromeProfilePath.trim() : playwrightProfilePath;
+    const normalized = candidate.replace(/[\\/]+$/, '');
+    const baseName = path.basename(normalized);
+    const parentDir = path.dirname(normalized);
+    const grandParentName = path.basename(parentDir).toLowerCase();
+
+    if (grandParentName === 'user data' && baseName) {
+        return {
+            userDataDir: parentDir,
+            profileDirectory: baseName,
+        };
+    }
+
+    return {
+        userDataDir: normalized,
+        profileDirectory: '',
+    };
+}
+
+async function ensureManagedChrome({ chromeExecutable, userDataDir, profileDirectory, debugPort, startUrl }) {
     const ready = await waitForDebugger(debugPort, 1000);
     if (ready) {
         return false;
     }
 
+    if (isChromeProfileLocked(userDataDir)) {
+        throw new Error(`Bot Chrome profile is already open without remote debugging on port ${debugPort}. Close that Chrome window or relaunch it with Launch-BotChrome.`);
+    }
+
     const args = [
         `--remote-debugging-port=${debugPort}`,
-        `--user-data-dir=${profileDir}`,
+        `--user-data-dir=${userDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
-        '--new-window',
-        startUrl,
     ];
+    if (profileDirectory) {
+        args.push(`--profile-directory=${profileDirectory}`);
+    }
+    args.push('--new-window', startUrl);
 
     const child = spawn(chromeExecutable, args, {
         detached: true,
@@ -119,6 +162,9 @@ function getComparableHostname(value) {
         return '';
     }
 }
+
+const FAST_NAV_TIMEOUT_MS = 15000;
+const FAST_RENDER_SETTLE_MS = 1000;
 
 function pickReusablePage(context, targetUrl) {
     const pages = context.pages().filter(page => {
@@ -187,15 +233,14 @@ async function run() {
 
     const projectRoot = process.env.BOT_PROJECT_ROOT || process.cwd();
     const chromeExecutable = process.env.CHROME_EXECUTABLE || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-    const playwrightProfilePath = process.env.PLAYWRIGHT_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
-    const chromeProfilePath = process.env.CHROME_PROFILE_DIR || playwrightProfilePath;
-    const profileDir = (playwrightProfilePath && playwrightProfilePath.trim()) ? playwrightProfilePath : chromeProfilePath;
-    const debugPort = Number.parseInt(process.env.BROWSER_DEBUG_PORT || '9222', 10);
+    const launchProfile = resolveChromeLaunchProfile(projectRoot);
+    const debugPort = Number.parseInt(process.env.BROWSER_DEBUG_PORT || '9333', 10);
     const keepOpen = envBool('BROWSER_KEEP_OPEN', true);
 
     await ensureManagedChrome({
         chromeExecutable,
-        profileDir,
+        userDataDir: launchProfile.userDataDir,
+        profileDirectory: launchProfile.profileDirectory,
         debugPort,
         startUrl: action === 'SearchGoogle' || action === 'GoogleTopResultsScreenshots' ? 'https://www.google.com' : url,
     });
@@ -279,7 +324,8 @@ async function run() {
             page = pickReusablePage(context, url) || await context.newPage();
             await page.bringToFront().catch(() => {});
             if (!page.url() || page.url() === 'about:blank' || getComparableHostname(page.url()) !== getComparableHostname(url)) {
-                await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: FAST_NAV_TIMEOUT_MS });
+                await sleep(FAST_RENDER_SETTLE_MS);
             }
             console.log('Browser is open and will remain available for reuse.');
         } else {
@@ -288,7 +334,12 @@ async function run() {
             const currentUrl = page.url();
             const sameHost = getComparableHostname(currentUrl) && getComparableHostname(currentUrl) === getComparableHostname(url);
             if (!sameHost) {
-                await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+                const waitUntil = action === 'GetContent' ? 'domcontentloaded' : 'networkidle';
+                const timeout = action === 'GetContent' ? FAST_NAV_TIMEOUT_MS : 60000;
+                await page.goto(url, { waitUntil, timeout });
+                if (action === 'GetContent') {
+                    await sleep(FAST_RENDER_SETTLE_MS);
+                }
             }
 
             if (action === 'Screenshot') {

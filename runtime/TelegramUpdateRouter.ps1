@@ -374,8 +374,15 @@ function Invoke-TelegramMessageRoute {
     }
 
     if ($text -match "^/(thinking)\s+(low|medium|high|none)$") {
-        Set-CurrentReasoningEffort -Value $matches[2].ToLower()
-        Send-TelegramText -chatId $chatId -text "Reasoning effort changed to: $(Get-CurrentReasoningEffort)"
+        $newValue = $matches[2].ToLower()
+        Set-CurrentReasoningEffort -Value $newValue
+        try {
+            $persistedValue = Set-PersistentReasoningEffort -ProjectRoot $WorkDir -Value $newValue
+            Send-TelegramText -chatId $chatId -text "Reasoning effort changed to: $persistedValue (persisted)"
+        }
+        catch {
+            Send-TelegramText -chatId $chatId -text "Reasoning effort changed to: $(Get-CurrentReasoningEffort) (runtime only). Could not persist: $($_.Exception.Message)"
+        }
         return
     }
 

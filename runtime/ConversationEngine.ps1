@@ -1,3 +1,40 @@
+function Test-LatestUserMessageIsMultimodal {
+    param(
+        [array]$Messages
+    )
+
+    if ($null -eq $Messages) {
+        return $false
+    }
+
+    for ($index = $Messages.Count - 1; $index -ge 0; $index--) {
+        $msg = $Messages[$index]
+        if ($null -eq $msg -or "$($msg.role)" -ne "user") {
+            continue
+        }
+
+        $content = $msg.content
+        if ($content -isnot [array]) {
+            return $false
+        }
+
+        foreach ($part in @($content)) {
+            if ($null -eq $part) {
+                continue
+            }
+
+            $partType = if ($part.PSObject.Properties["type"]) { "$($part.type)" } else { "" }
+            if ($partType -in @("image_url", "input_audio")) {
+                return $true
+            }
+        }
+
+        return $false
+    }
+
+    return $false
+}
+
 function Invoke-ModelResponseWithFallback {
     param(
         [string]$ChatId,
@@ -10,10 +47,14 @@ function Invoke-ModelResponseWithFallback {
         AbortTurn = $false
     }
 
-    $aiResp = Invoke-OpenRouter -model (Get-CurrentMainModel) -messages $Messages -reasoningEffort (Get-CurrentReasoningEffort)
+    $useMultimodalModel = Test-LatestUserMessageIsMultimodal -Messages $Messages
+    $primaryModel = if ($useMultimodalModel) { Get-MultimodalModel } else { Get-CurrentMainModel }
+    $primaryReasoning = if ($useMultimodalModel) { "none" } else { Get-CurrentReasoningEffort }
+
+    $aiResp = Invoke-OpenRouter -model $primaryModel -messages $Messages -reasoningEffort $primaryReasoning
 
     if ([string]::IsNullOrWhiteSpace($aiResp)) {
-        Write-DailyLog -message "Primary AI returned empty output. Trying fallback with $(Get-SecondaryMainModel)..." -type "WARN"
+        Write-DailyLog -message "Primary AI returned empty output. Trying fallback with $(Get-SecondaryMainModel)... multimodal=$useMultimodalModel primary=$primaryModel reasoning=$primaryReasoning" -type "WARN"
         $aiResp = Invoke-OpenRouter -model (Get-SecondaryMainModel) -messages $Messages -reasoningEffort "none"
 
         if ([string]::IsNullOrWhiteSpace($aiResp)) {
@@ -26,7 +67,8 @@ function Invoke-ModelResponseWithFallback {
         Write-Host "ReinikeAI (FALLBACK): $aiResp" -ForegroundColor Magenta
     }
     else {
-        Write-Host "ReinikeAI: $aiResp" -ForegroundColor Cyan
+        $modeLabel = if ($useMultimodalModel) { "MULTIMODAL" } else { "DECISION" }
+        Write-Host "ReinikeAI [$modeLabel]: $aiResp" -ForegroundColor Cyan
     }
 
     $result.Success = $true

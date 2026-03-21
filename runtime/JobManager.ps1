@@ -61,6 +61,207 @@ function Get-DraftReadyRequest {
     }
 }
 
+function Get-OrchestratorUsableResultText {
+    param([string]$ResultText)
+
+    if ([string]::IsNullOrWhiteSpace($ResultText)) {
+        return ""
+    }
+
+    $text = $ResultText.Replace("`r", "").Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return ""
+    }
+
+    $anchors = @(
+        "[PUBLISH_CONFIRMATION_REQUIRED]",
+        "[WINDOWS_USE_FALLBACK_REQUIRED]",
+        "[LOGIN_REQUIRED]",
+        "[DRAFT_READY]",
+        "[POSTED]",
+        "**All tasks complete.**",
+        "All tasks complete.",
+        "**Penultimate blog post identified:**",
+        "**Latest post identified:**",
+        "**X post published**",
+        "**Draft tweet:**"
+    )
+
+    $bestIndex = -1
+    foreach ($anchor in $anchors) {
+        $index = $text.LastIndexOf($anchor, [System.StringComparison]::OrdinalIgnoreCase)
+        if ($index -gt $bestIndex) {
+            $bestIndex = $index
+        }
+    }
+
+    if ($bestIndex -gt 0) {
+        $start = [Math]::Max(0, $bestIndex - 200)
+        $text = $text.Substring($start).Trim()
+    }
+
+    $lines = @()
+    $lastBlank = $false
+    foreach ($line in ($text -split "`n")) {
+        $trim = $line.Trim()
+
+        if ([string]::IsNullOrWhiteSpace($trim)) {
+            if (-not $lastBlank) {
+                $lines += ""
+            }
+            $lastBlank = $true
+            continue
+        }
+
+        $skip = $false
+        $skipPatterns = @(
+            '^(> build\b|> browser\b|> social\b)',
+            '^# Todos\b',
+            '^\[[ xX]\]\s',
+            '^\$\s',
+            '^%\s',
+            '^Skill\s+"[^"]+"$',
+            '^Read\s+archives\\',
+            '^Write\s+archives\\',
+            '^Wrote file successfully\.$',
+            '^Found the blog data asset\.',
+            '^Let me\b',
+            '^There''s a dedicated\b',
+            '^<bash_metadata>$',
+            '^</bash_metadata>$',
+            '^bash tool terminated command after exceeding timeout'
+        )
+
+        foreach ($pattern in $skipPatterns) {
+            if ($trim -match $pattern) {
+                $skip = $true
+                break
+            }
+        }
+
+        if ($skip) { continue }
+
+        $lines += $line
+        $lastBlank = $false
+    }
+
+    return (($lines -join "`n").Trim())
+}
+
+function Get-PublishConfirmationRequest {
+    param([string]$ResultText)
+
+    if ([string]::IsNullOrWhiteSpace($ResultText)) {
+        return $null
+    }
+
+    if ($ResultText -notmatch '(?s)\[PUBLISH_CONFIRMATION_REQUIRED\]\s*Site:\s*(?<site>[^\r\n]+)\s*Task:\s*(?<task>[^\r\n]+)(?:\s*Reason:\s*(?<reason>[^\r\n]+))?') {
+        return $null
+    }
+
+    $siteText = $Matches['site'].Trim()
+    $taskText = $Matches['task'].Trim()
+    $reasonText = $Matches['reason'].Trim()
+    if ([string]::IsNullOrWhiteSpace($taskText)) {
+        return $null
+    }
+
+    return [PSCustomObject]@{
+        Site = $siteText
+        Task = $taskText
+        Reason = $reasonText
+    }
+}
+
+function Get-LocalBrowserWorkflowStateDetails {
+    param(
+        [string]$Label
+    )
+
+    $stateFileName = switch ("$Label") {
+        "LinkedIn Draft" { "linkedin-draft-state.json" }
+        "X Draft" { "x-draft-state.json" }
+        "Web Interactive" { "web-interactive-state.json" }
+        default { "" }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($stateFileName)) {
+        return $null
+    }
+
+    $archivesDir = Join-Path (Get-Location) "archives"
+    $statePath = Join-Path $archivesDir $stateFileName
+    if (-not (Test-Path $statePath)) {
+        return $null
+    }
+
+    try {
+        $state = Get-Content $statePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $state) {
+            return $null
+        }
+
+        return [PSCustomObject]@{
+            Status = "$($state.status)".Trim()
+            Reason = "$($state.reason)".Trim()
+            Screenshot = "$($state.screenshot)".Trim()
+            CurrentUrl = "$($state.currentUrl)".Trim()
+        }
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-TaskRequestsFinalPublish {
+    param([string]$Task)
+
+    if ([string]::IsNullOrWhiteSpace($Task)) {
+        return $false
+    }
+
+    $normalizedTask = $Task.ToLowerInvariant()
+    $mentionsPublish = $normalizedTask -match 'publish|publica|publicar|publishing|post it|send it|submit it|click post|click publish|haz clic en publicar|pulsa publicar|presiona publicar'
+    $mentionsNoPublish = $normalizedTask -match "don't publish|do not publish|no publish|no publicar|no lo publiques|sin publicar|leave it as draft|dejalo como borrador|déjalo como borrador|manually publish|manualmente|manualmente"
+    return ($mentionsPublish -and -not $mentionsNoPublish)
+}
+
+function Get-PublishSiteNameFromTask {
+    param([string]$Task)
+
+    if ([string]::IsNullOrWhiteSpace($Task)) {
+        return "the website"
+    }
+
+    $normalizedTask = $Task.ToLowerInvariant()
+    if ($normalizedTask -match 'linkedin') { return "LinkedIn" }
+    if ($normalizedTask -match 'x\.com|twitter|\btweet\b|\bthread\b') { return "X.com" }
+    if ($normalizedTask -match 'facebook') { return "Facebook" }
+    if ($normalizedTask -match 'instagram') { return "Instagram" }
+    if ($normalizedTask -match 'reddit') { return "Reddit" }
+    return "the website"
+}
+
+function New-PublishWindowsUseTaskFromSite {
+    param(
+        [string]$Site,
+        [string]$OriginalTask
+    )
+
+    $siteName = if ([string]::IsNullOrWhiteSpace($Site)) { Get-PublishSiteNameFromTask -Task $OriginalTask } else { $Site.Trim() }
+    switch -Regex ($siteName.ToLowerInvariant()) {
+        'linkedin' {
+            return "In the already-open LinkedIn browser window with the verified draft ready, click the final 'Post' or 'Publish' button once to publish it. Do not edit the text first. If a final confirmation dialog appears, approve it."
+        }
+        'x\.com|twitter|x' {
+            return "In the already-open X.com browser window with the verified draft ready, click the final 'Post' button once to publish it. Do not edit the text first. If a final confirmation dialog appears, approve it."
+        }
+        default {
+            return "In the already-open browser window showing the verified draft on $siteName, click the final Publish/Post/Send/Submit button once to complete the action. Do not edit the text first. If a final confirmation dialog appears, approve it."
+        }
+    }
+}
+
 function Offer-WindowsUseEscalation {
     param(
         [object]$JobRecord,
@@ -113,25 +314,45 @@ function Offer-WindowsUseEscalation {
         $safeReason = $safeReason.Substring(0, 400) + "..."
     }
 
-    $message = @"
-*OpenCode requested Windows-Use escalation.*
+    $taskPreview = if ([string]::IsNullOrWhiteSpace($TaskText)) { "" } else { $TaskText.Trim() }
+    if ($taskPreview.Length -gt 260) {
+        $taskPreview = $taskPreview.Substring(0, 260) + "..."
+    }
 
-Original task:
-``$($JobRecord.Task)``
-
-Reason:
-``$safeReason``
-
-Proposed Windows-Use task:
-``$TaskText``
-
-Approve if you want the orchestrator to run this through the local Windows desktop.
-"@.Trim()
+    $message = @(
+        "OpenCode pide confirmacion para un clic/accion final con Windows-Use.",
+        "",
+        "Motivo:",
+        $safeReason,
+        "",
+        "Accion propuesta:",
+        $taskPreview,
+        "",
+        "Si apruebas, el orquestador lo ejecutara en el escritorio."
+    ) -join "`n"
 
     Send-TelegramText -chatId $JobRecord.ChatId -text $message -buttons $buttons
     Add-ChatMemory -chatId $JobRecord.ChatId -role "user" -content "[SYSTEM]: OpenCode requested a Windows-Use escalation for task '$($JobRecord.Task)'. Reason: $safeReason Proposed Windows-Use task: $TaskText"
     Write-DailyLog -message "Windows-Use escalation offered for job $($JobRecord.Job.Id). Reason='$safeReason' task='$TaskText'" -type "WARN"
     return $true
+}
+
+function Offer-PublishConfirmation {
+    param(
+        [object]$JobRecord,
+        [string]$SiteName,
+        [string]$TaskText,
+        [string]$ReasonText = ""
+    )
+
+    $reason = if ([string]::IsNullOrWhiteSpace($ReasonText)) {
+        "The draft is ready. The final publish click is treated as a separate irreversible desktop action that requires native confirmation."
+    }
+    else {
+        $ReasonText
+    }
+
+    return (Offer-WindowsUseEscalation -JobRecord $JobRecord -TaskText $TaskText -ReasonText $reason)
 }
 
 function Get-StuckJobs {
@@ -227,6 +448,19 @@ function Complete-ActiveJobs {
         }
         else { "" }
         $subRes = (Repair-JobEncoding -text $subRes).Trim()
+        $usageInfo = Get-OpenCodeUsageFromResultText -ResultText $subRes
+        $usageTelegram = ""
+        if ($usageInfo) {
+            $usageLine = Format-OpenCodeUsageLine -Usage $usageInfo
+            if (-not [string]::IsNullOrWhiteSpace($usageLine)) {
+                Write-Host "[OpenCode Usage] $usageLine" -ForegroundColor DarkCyan
+                Write-DailyLog -message "Job $($j.Job.Id) usage: $usageLine" -type "JOB"
+            }
+            if ($j.Type -eq "OpenCode") {
+                $usageTelegram = Format-OpenCodeUsageLine -Usage $usageInfo
+            }
+            $subRes = Remove-OpenCodeUsageMarker -ResultText $subRes
+        }
 
         $jobErrors = $j.Job.ChildJobs | ForEach-Object { $_.Error } | Where-Object { $null -ne $_ }
         if ($jobErrors) {
@@ -272,6 +506,11 @@ function Complete-ActiveJobs {
         Remove-Job -Job $j.Job -Force -ErrorAction SilentlyContinue
 
         if ($j.Type -eq "Subagent" -or $j.Type -eq "OpenCode" -or $j.Type -eq "Script") {
+            if (-not [string]::IsNullOrWhiteSpace($usageTelegram)) {
+                Send-TelegramText -chatId $j.ChatId -text $usageTelegram
+                $usageTelegram = ""
+            }
+
             if (($subRes -match "\[ERROR_OPENCODE_CREDITS\]") -or ($subRes -match "\[OpenCode termino sin output\]")) {
                     Write-DailyLog -message "Detected credit error or silent completion in Job $($j.Job.Id). Retrying through the HTTP API." -type "WARN"
 
@@ -306,6 +545,16 @@ function Complete-ActiveJobs {
                 }
             }
 
+            $publishConfirmation = Get-PublishConfirmationRequest -ResultText $subRes
+            if (($j.Type -eq "OpenCode" -or $j.Type -eq "Script") -and $null -ne $publishConfirmation) {
+                $offered = Offer-PublishConfirmation -JobRecord $j -SiteName $publishConfirmation.Site -TaskText $publishConfirmation.Task -ReasonText $publishConfirmation.Reason
+                if ($offered) {
+                    Remove-ActiveJobById -JobId $j.Job.Id
+                    Write-JobsFile
+                    continue
+                }
+            }
+
             $loginRequired = Get-LoginRequiredRequest -ResultText $subRes
             if (($j.Type -eq "OpenCode" -or $j.Type -eq "Script") -and $null -ne $loginRequired) {
                 $siteName = $loginRequired.Site
@@ -321,6 +570,15 @@ function Complete-ActiveJobs {
             $draftReady = Get-DraftReadyRequest -ResultText $subRes
             if ($j.Type -eq "Script" -and $null -ne $draftReady) {
                 $siteName = if ([string]::IsNullOrWhiteSpace($draftReady.Site)) { "the website" } else { $draftReady.Site }
+                if (Test-TaskRequestsFinalPublish -Task $j.Task) {
+                    $publishTask = New-PublishWindowsUseTaskFromSite -Site $siteName -OriginalTask $j.Task
+                    $offered = Offer-PublishConfirmation -JobRecord $j -SiteName $siteName -TaskText $publishTask -ReasonText "The draft is ready and verified. The final publish click must be separately approved through Windows-Use."
+                    if ($offered) {
+                        Remove-ActiveJobById -JobId $j.Job.Id
+                        Write-JobsFile
+                        continue
+                    }
+                }
                 if ("$($j.Label)" -eq "Web Interactive") {
                     Send-TelegramText -chatId $j.ChatId -text "[READY] La pagina quedo lista en $($siteName)`nDeje el navegador abierto para que revises el estado final y continues manualmente si quieres."
                     Add-ChatMemory -chatId $j.ChatId -role "system" -content "[SYSTEM]: A local browser automation script left $siteName open in a verified ready state for manual review. Do not claim it was submitted or published."
@@ -346,8 +604,26 @@ function Complete-ActiveJobs {
                     "LinkedIn Draft" { "LinkedIn" }
                     default { "browser workflow" }
                 }
+                $stateDetails = Get-LocalBrowserWorkflowStateDetails -Label "$($j.Label)"
+                $diagnosticLines = @()
+                if ($stateDetails) {
+                    if (-not [string]::IsNullOrWhiteSpace($stateDetails.Status)) {
+                        $diagnosticLines += "Estado detectado: $($stateDetails.Status)"
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($stateDetails.Reason)) {
+                        $diagnosticLines += "Causa detectada: $($stateDetails.Reason)"
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($stateDetails.CurrentUrl)) {
+                        $diagnosticLines += "URL actual: $($stateDetails.CurrentUrl)"
+                    }
+                }
                 Update-TelegramStatus -job $j -text "$emojiWarn *$workflowName ended without confirmation.*"
-                Send-TelegramText -chatId $j.ChatId -text "[WARN] El flujo de $workflowName termino en un estado ambiguo: no devolvio ``[DRAFT_READY]`` ni ``[LOGIN_REQUIRED]``. Lo detuve aqui y no lance capturas ni reintentos automaticos.`n`nUltima salida:`n$preview"
+                $warnText = "[WARN] El flujo de $workflowName no confirmo el estado final: no devolvio ``[DRAFT_READY]`` ni ``[LOGIN_REQUIRED]``. Lo detuve aqui para evitar falsos positivos y no lance reintentos automaticos."
+                if ($diagnosticLines.Count -gt 0) {
+                    $warnText += "`n`n" + ($diagnosticLines -join "`n")
+                }
+                $warnText += "`n`nUltima salida:`n$preview"
+                Send-TelegramText -chatId $j.ChatId -text $warnText
                 Add-ChatMemory -chatId $j.ChatId -role "system" -content ("SYSTEM: A {0} script ended without the required [DRAFT_READY] or [LOGIN_REQUIRED] marker. Do not trigger follow-up screenshots, retries, or new browser actions automatically. Report the ambiguous state directly to the user." -f $workflowName)
                 Remove-ActiveJobById -JobId $j.Job.Id
                 Write-JobsFile
@@ -373,6 +649,8 @@ function Complete-ActiveJobs {
                     "",
                     "Error:",
                     $safeError,
+                    $(if ($usageInfo) { "" } else { $null }),
+                    $(if ($usageInfo) { (Format-OpenCodeUsageLine -Usage $usageInfo) } else { $null }),
                     "",
                     "No ejecute ningun fallback local automatico despues del fallo. Si quieres, reintenta OpenCode o revisa el servidor."
                 ) -join "`n"
@@ -388,9 +666,23 @@ function Complete-ActiveJobs {
 
             $numFilesSent = Send-DetectedFiles -chatId $j.ChatId -text $subRes
             $fileNotice = if ($numFilesSent -gt 0) { "`n`n[SYSTEM]: $numFilesSent file(s) were detected and automatically sent to the user. Do not try to send them again with 'Telegram_Sender' or 'CMD'." } else { "" }
+            $usageNotice = if ($usageInfo -and $j.Type -eq "OpenCode") { "`n`n[SYSTEM]: " + (Format-OpenCodeUsageLine -Usage $usageInfo) } else { "" }
 
             $sanitizedRes = $subRes -replace '(?i)</?(minimax:)?tool_call.*?>', '' -replace '(?i)</?invoke.*?>', ''
-            $sysMsg = ("SYSTEM: Task '{0}' completed by {1}. Result:`n{2}{3}`n`nYou must now analyze this result and reply to the user with a clear English summary. Do not delegate again. Respond directly." -f $j.Task, $j.Type, $sanitizedRes, $fileNotice)
+            $usableRes = Get-OrchestratorUsableResultText -ResultText $sanitizedRes
+            $memorySummary = if (Get-Command New-TaskCompletionMemorySummary -ErrorAction SilentlyContinue) {
+                New-TaskCompletionMemorySummary -TaskText $j.Task -ResultText ($usableRes + $fileNotice + $usageNotice)
+            }
+            else {
+                $fallbackCombined = ($usableRes + $fileNotice + $usageNotice)
+                if ($fallbackCombined.Length -gt 1800) {
+                    $fallbackCombined.Substring(0, 1800).TrimEnd() + "`n[...summary truncated]"
+                }
+                else {
+                    $fallbackCombined
+                }
+            }
+            $sysMsg = ("SYSTEM: Task '{0}' completed by {1}. Result:`n{2}`n`nYou must now analyze this result and reply to the user with a clear English summary. Do not delegate again. Respond directly." -f $j.Task, $j.Type, $memorySummary)
             try {
                 Add-ChatMemory -chatId $j.ChatId -role "system" -content $sysMsg
             }
@@ -461,6 +753,57 @@ function Remove-StuckJobs {
         Remove-ActiveJobById -JobId $j.Job.Id
         Write-JobsFile
     }
+}
+
+function Get-OpenCodeUsageFromResultText {
+    param([string]$ResultText)
+
+    if ([string]::IsNullOrWhiteSpace($ResultText)) {
+        return $null
+    }
+
+    $pattern = '(?s)\[OPENCODE_USAGE\]\s*sessionId:\s*(?<session>[^\r\n]*)\s*inputTokens:\s*(?<input>\d+)\s*outputTokens:\s*(?<output>\d+)\s*reasoningTokens:\s*(?<reasoning>\d+)\s*cacheReadTokens:\s*(?<cacheRead>\d+)\s*cacheWriteTokens:\s*(?<cacheWrite>\d+)\s*totalTokens:\s*(?<total>\d+)\s*cost:\s*(?<cost>[0-9.]+)\s*\[/OPENCODE_USAGE\]'
+    if ($ResultText -notmatch $pattern) {
+        return $null
+    }
+
+    return [PSCustomObject]@{
+        SessionId = $Matches['session'].Trim()
+        InputTokens = [int]$Matches['input']
+        OutputTokens = [int]$Matches['output']
+        ReasoningTokens = [int]$Matches['reasoning']
+        CacheReadTokens = [int]$Matches['cacheRead']
+        CacheWriteTokens = [int]$Matches['cacheWrite']
+        TotalTokens = [int]$Matches['total']
+        Cost = [double]$Matches['cost']
+    }
+}
+
+function Remove-OpenCodeUsageMarker {
+    param([string]$ResultText)
+
+    if ([string]::IsNullOrWhiteSpace($ResultText)) {
+        return $ResultText
+    }
+
+    return ([regex]::Replace($ResultText, '(?s)\n?\n?\[OPENCODE_USAGE\].*?\[/OPENCODE_USAGE\]\s*', '')).Trim()
+}
+
+function Format-OpenCodeUsageLine {
+    param([object]$Usage)
+
+    if ($null -eq $Usage) {
+        return ""
+    }
+
+    $costText = ('{0:N6}' -f [double]$Usage.Cost).TrimEnd('0').TrimEnd('.')
+    if ([string]::IsNullOrWhiteSpace($costText)) {
+        $costText = "0"
+    }
+
+    $emojiChart = [char]::ConvertFromUtf32(0x1F4CA)
+    $bullet = [char]::ConvertFromUtf32(0x2022)
+    return "$emojiChart OpenCode usage`n$bullet Session total: $($Usage.TotalTokens)`n$bullet Fresh input: $($Usage.InputTokens)`n$bullet Output: $($Usage.OutputTokens)`n$bullet Reasoning: $($Usage.ReasoningTokens)`n$bullet Cache read: $($Usage.CacheReadTokens)`n$bullet Cost: `$$costText"
 }
 
 function Invoke-JobMaintenanceCycle {

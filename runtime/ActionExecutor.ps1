@@ -53,6 +53,24 @@ function Get-BotConfigFromScriptScope {
     }
 }
 
+function Get-TaskStatusPreview {
+    param(
+        [string]$TaskText,
+        [int]$MaxLength = 260
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TaskText)) {
+        return ""
+    }
+
+    $text = ($TaskText.Trim() -replace '\s+', ' ')
+    if ($text.Length -le $MaxLength) {
+        return $text
+    }
+
+    return ($text.Substring(0, $MaxLength).TrimEnd() + "...")
+}
+
 function Test-WindowsUseFallbackAvailable {
     $cfg = Get-BotConfigFromScriptScope
     if ($null -eq $cfg -or -not $cfg.PSObject.Properties["WindowsUse"] -or $null -eq $cfg.WindowsUse) {
@@ -191,16 +209,17 @@ function Invoke-ParsedAction {
             return [PSCustomObject]$result
         }
 
-        $plan = New-OpenCodeExecutionPlan -Task $taskDescription -EnableMCPs $mcps -PreferredAgent $preferredAgent
+        $plan = New-OpenCodeExecutionPlan -Task $taskDescription -EnableMCPs $mcps -PreferredAgent $preferredAgent -AllowLocalScriptShortcuts:$false
         $delegatedTaskDescription = if ($plan.PSObject.Properties["DelegatedTask"] -and -not [string]::IsNullOrWhiteSpace("$($plan.DelegatedTask)")) { "$($plan.DelegatedTask)" } else { $taskDescription }
+        $taskPreview = Get-TaskStatusPreview -TaskText $taskDescription
 
         $emojiHourglass = [char]::ConvertFromUtf32(0x23F3)
         $capabilityRisk = Get-CapabilityRiskProfile -Capability $plan.Capability
-        $msgStatus = "$emojiHourglass Delegating to OpenCode ($($plan.Capability), risk: $($capabilityRisk.Level)): $taskDescription"
+        $msgStatus = "$emojiHourglass Delegating to OpenCode ($($plan.Capability), risk: $($capabilityRisk.Level)): $taskPreview"
 
         if ($plan.ExecutionMode -eq "script" -and -not [string]::IsNullOrWhiteSpace("$($plan.ScriptCommand)")) {
             $scriptLabel = if (-not [string]::IsNullOrWhiteSpace($plan.Label)) { $plan.Label } else { "Local Script" }
-            $scriptStatus = "$emojiHourglass Running local workflow ($($plan.Capability), risk: $($capabilityRisk.Level)): $taskDescription"
+            $scriptStatus = "$emojiHourglass Running local workflow ($($plan.Capability), risk: $($capabilityRisk.Level)): $taskPreview"
             $checkpointPath = ""
             $cfg = Get-BotConfigFromScriptScope
             $scriptCmd = "$($plan.ScriptCommand)"
@@ -469,8 +488,10 @@ function Invoke-ParsedAction {
 
     if ($Item.ActionType -eq "STATUS") {
         $statusRes = Run-PCAction -actionStr "powershell -File .\skills\opencode\OpenCode-Status.ps1" -chatId $ChatId
-        Add-ChatMemory -chatId $ChatId -role "user" -content "CURRENT TASK STATUS:`n$statusRes"
-        $result.RequiresLoop = $true
+        if (-not [string]::IsNullOrWhiteSpace($statusRes)) {
+            Send-TelegramText -chatId $ChatId -text $statusRes
+        }
+        $result.SuppressFinalReply = $true
         return [PSCustomObject]$result
     }
 

@@ -123,20 +123,63 @@ async function waitForDebugger(debugPort, timeoutMs) {
     return false;
 }
 
-async function ensureManagedChrome({ chromeExecutable, profileDir, debugPort, startUrl }) {
+function isChromeProfileLocked(userDataDir) {
+    if (!userDataDir || !fs.existsSync(userDataDir)) {
+        return false;
+    }
+
+    const lockCandidates = [
+        'SingletonLock',
+        'SingletonCookie',
+        'SingletonSocket',
+        'lockfile'
+    ];
+
+    return lockCandidates.some(name => fs.existsSync(path.join(userDataDir, name)));
+}
+
+function resolveChromeLaunchProfile(projectRoot) {
+    const playwrightProfilePath = process.env.PLAYWRIGHT_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
+    const chromeProfilePath = process.env.CHROME_PROFILE_DIR || '';
+    const candidate = (chromeProfilePath && chromeProfilePath.trim()) ? chromeProfilePath.trim() : playwrightProfilePath;
+    const normalized = candidate.replace(/[\\/]+$/, '');
+    const baseName = path.basename(normalized);
+    const parentDir = path.dirname(normalized);
+    const grandParentName = path.basename(parentDir).toLowerCase();
+
+    if (grandParentName === 'user data' && baseName) {
+        return {
+            userDataDir: parentDir,
+            profileDirectory: baseName,
+        };
+    }
+
+    return {
+        userDataDir: normalized,
+        profileDirectory: '',
+    };
+}
+
+async function ensureManagedChrome({ chromeExecutable, userDataDir, profileDirectory, debugPort, startUrl }) {
     const ready = await waitForDebugger(debugPort, 1000);
     if (ready) {
         return false;
     }
 
+    if (isChromeProfileLocked(userDataDir)) {
+        throw new Error(`Bot Chrome profile is already open without remote debugging on port ${debugPort}. Close that Chrome window or relaunch it with Launch-BotChrome.`);
+    }
+
     const args = [
         `--remote-debugging-port=${debugPort}`,
-        `--user-data-dir=${profileDir}`,
+        `--user-data-dir=${userDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
-        '--new-window',
-        startUrl,
     ];
+    if (profileDirectory) {
+        args.push(`--profile-directory=${profileDirectory}`);
+    }
+    args.push('--new-window', startUrl);
 
     const child = spawn(chromeExecutable, args, {
         detached: true,
@@ -329,6 +372,114 @@ async function hasVisibleComposer(page) {
     return false;
 }
 
+async function selectPostingAccount(page, accountPreference) {
+    const normalizedPreference = (accountPreference || 'personal').trim().toLowerCase();
+    if (!normalizedPreference) {
+        return true;
+    }
+
+    const accountTriggerSelectors = [
+        'div[role="button"] span[aria-hidden="true"]',
+        'button[aria-haspopup="listbox"]',
+        'div[role="button"][aria-haspopup="listbox"]',
+        'div[role="button"]:has-text("Post to Anyone")',
+    ];
+
+    const openAccountPicker = async () => {
+        for (const selector of accountTriggerSelectors) {
+            try {
+                const trigger = page.locator(selector).first();
+                if (await trigger.count() > 0 && await trigger.isVisible({ timeout: 1000 })) {
+                    await trigger.click({ timeout: 5000 });
+                    await sleep(1200);
+                    return true;
+                }
+            } catch {}
+        }
+
+        const fallbackTexts = ['Alexander Reinike-Kaiser', 'Posting as', 'Post to Anyone'];
+        for (const text of fallbackTexts) {
+            try {
+                const trigger = page.getByText(text, { exact: false }).first();
+                if (await trigger.count() > 0 && await trigger.isVisible({ timeout: 1000 })) {
+                    await trigger.click({ timeout: 5000 });
+                    await sleep(1200);
+                    return true;
+                }
+            } catch {}
+        }
+
+        return false;
+    };
+
+    if (!(await openAccountPicker())) {
+        return normalizedPreference === 'personal';
+    }
+
+    if (!(await page.getByText('Posting as', { exact: false }).first().isVisible({ timeout: 2000 }).catch(() => false))) {
+        await openAccountPicker().catch(() => false);
+    }
+
+    let choiceLocator = null;
+    if (normalizedPreference === 'personal') {
+        const companyHints = /reinik|company|page/i;
+        const options = page.locator('div[role="dialog"] button, div[role="dialog"] div[role="button"], div[role="dialog"] label');
+        const count = await options.count().catch(() => 0);
+        for (let index = 0; index < count; index++) {
+            const option = options.nth(index);
+            const text = (await option.innerText().catch(() => '')).trim();
+            if (!text) {
+                continue;
+            }
+            if (!companyHints.test(text)) {
+                choiceLocator = option;
+                break;
+            }
+        }
+    } else if (normalizedPreference === 'company') {
+        choiceLocator = page.getByText(/reinik|company|page/i, { exact: false }).first();
+    } else {
+        choiceLocator = page.getByText(accountPreference, { exact: false }).first();
+    }
+
+    if (choiceLocator) {
+        try {
+            await choiceLocator.click({ timeout: 5000 });
+            await sleep(800);
+        } catch {}
+    }
+
+    const saveButtons = [
+        page.getByRole('button', { name: /save/i }).first(),
+        page.getByRole('button', { name: /guardar/i }).first(),
+    ];
+    for (const button of saveButtons) {
+        try {
+            if (await button.count() > 0 && await button.isVisible({ timeout: 1000 })) {
+                await button.click({ timeout: 5000 });
+                await sleep(1200);
+                return true;
+            }
+        } catch {}
+    }
+
+    const backButtons = [
+        page.getByRole('button', { name: /back/i }).first(),
+        page.getByRole('button', { name: /atr[aá]s/i }).first(),
+    ];
+    for (const button of backButtons) {
+        try {
+            if (await button.count() > 0 && await button.isVisible({ timeout: 1000 })) {
+                await button.click({ timeout: 5000 });
+                await sleep(1200);
+                return normalizedPreference === 'personal';
+            }
+        } catch {}
+    }
+
+    return normalizedPreference === 'personal';
+}
+
 async function findPageWithVisibleComposer(browser) {
     for (const context of browser.contexts()) {
         for (const page of context.pages()) {
@@ -371,17 +522,18 @@ async function run() {
     const args = parseArgs(process.argv.slice(2));
     const projectRoot = process.env.BOT_PROJECT_ROOT || process.cwd();
     const chromeExecutable = process.env.CHROME_EXECUTABLE || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-    const playwrightProfilePath = process.env.PLAYWRIGHT_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
+    const launchProfile = resolveChromeLaunchProfile(projectRoot);
     const outputScreenshot = args.screenshot || path.join(projectRoot, 'archives', 'linkedin-post-draft.png');
     const statePath = args.state || path.join(projectRoot, 'archives', 'linkedin-draft-state.json');
     const mode = (args.mode || 'compose').trim().toLowerCase();
+    const accountPreference = (args.account || 'personal').trim();
     const contentPath = args.content;
-    const debugPort = Number.parseInt(args.port || process.env.BROWSER_DEBUG_PORT || '9222', 10);
+    const debugPort = Number.parseInt(args.port || process.env.BROWSER_DEBUG_PORT || '9333', 10);
     const postContent = mode === 'compose' ? readRequiredText(contentPath, 'Post content') : readOptionalText(contentPath);
 
     ensureDirForFile(outputScreenshot);
     ensureDirForFile(statePath);
-    fs.mkdirSync(playwrightProfilePath, { recursive: true });
+    fs.mkdirSync(launchProfile.userDataDir, { recursive: true });
 
     writeState(statePath, {
         status: 'starting',
@@ -391,7 +543,8 @@ async function run() {
 
     await ensureManagedChrome({
         chromeExecutable,
-        profileDir: playwrightProfilePath,
+        userDataDir: launchProfile.userDataDir,
+        profileDirectory: launchProfile.profileDirectory,
         debugPort,
         startUrl: 'https://www.linkedin.com/feed/',
     });
@@ -474,6 +627,25 @@ async function run() {
             }
 
             await sleep(2500);
+            console.log(`[LinkedIn] Selecting posting account: ${accountPreference}...`);
+            writeState(statePath, {
+                status: 'selecting_account',
+                site: 'LinkedIn',
+                screenshot: outputScreenshot,
+                mode,
+                accountPreference,
+            });
+            const accountSelected = await selectPostingAccount(page, accountPreference);
+            if (!accountSelected) {
+                await page.screenshot({ path: outputScreenshot, fullPage: true });
+                writeState(statePath, {
+                    status: 'error',
+                    site: 'LinkedIn',
+                    reason: `Could not switch the posting account to ${accountPreference}.`,
+                    screenshot: outputScreenshot,
+                });
+                throw new Error(`Could not switch the posting account to ${accountPreference}.`);
+            }
 
             await page.bringToFront().catch(() => {});
             console.log('[LinkedIn] Filling post editor...');

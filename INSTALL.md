@@ -98,6 +98,8 @@ Edit `config/settings.json` and fill in:
 - `opencode.apiKey`
 - `opencode.serverPassword`
 
+By default, fresh installs now point OpenCode tasks to `opencode/kimi-k2.5`. The bundled OpenCode user-config template also pins the `build`, `browser`, and `social` agents to `variant: "high"` so the provider-side OpenCode model starts with the Kimi 2.5 high-effort path unless you override it locally.
+
 You can also override any of those with environment variables later.
 
 ## 6. Prepare OpenCode config
@@ -134,10 +136,18 @@ Important:
 If you want persistent Chrome sessions for the Playwright helpers:
 
 1. Set `browser.chromeExecutable` if Chrome is not installed in the default location.
-2. Set `browser.chromeProfileDir` to the Chrome profile you want to reuse.
+2. Set `browser.chromeProfileDir` to a dedicated bot Chrome profile folder.
 3. Set `browser.playwrightProfileDir` to a writable folder for Playwright.
 
 The installer creates `profiles/playwright/` by default.
+
+Recommended:
+
+- use a dedicated persistent profile such as `profiles/chrome-bot/`
+- launch that browser with `.\Launch-BotChrome.bat`
+- keep `browser.debugPort` on a dedicated bot-only port such as `9333`
+
+This avoids attaching automation to your personal daily Chrome instance while still keeping bot sessions logged in.
 
 ## 8. Run the setup helper
 

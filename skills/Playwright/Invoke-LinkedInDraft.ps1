@@ -97,6 +97,33 @@ function Get-LinkedInTaskMode {
     return "compose"
 }
 
+function Get-LinkedInAccountPreference {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return "personal"
+    }
+
+    $normalized = $Text.ToLowerInvariant()
+    if ($normalized -match 'company page|page account|company account|pagina de empresa|cuenta de empresa|publicar como empresa|post as company') {
+        return "company"
+    }
+
+    $personalPreference = $normalized -match 'personal account|cuenta personal|publicar como personal|usa la cuenta personal|use the personal account'
+    if ($personalPreference) {
+        return "personal"
+    }
+
+    if ($Text -match '(?is)(?:posting as|post as|publicar como|usar cuenta|use account)\s*[:\-]?\s*(?<account>[^\r\n]{3,80})') {
+        $candidate = $Matches['account'].Trim()
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            return $candidate
+        }
+    }
+
+    return "personal"
+}
+
 function Resolve-ExecutablePath {
     param([string[]]$Candidates)
 
@@ -203,6 +230,7 @@ if ([string]::IsNullOrWhiteSpace($effectiveTaskText)) {
 }
 
 $mode = Get-LinkedInTaskMode -Text $effectiveTaskText
+$accountPreference = Get-LinkedInAccountPreference -Text $effectiveTaskText
 $postContent = ""
 if ($mode -eq "compose") {
     $postContent = Get-LinkedInPostContent -Text $effectiveTaskText
@@ -235,7 +263,7 @@ $env:BROWSER_DEBUG_PORT = "$($botConfig.Browser.DebugPort)"
 $env:BROWSER_KEEP_OPEN = if ([bool]$botConfig.Browser.KeepOpen) { "true" } else { "false" }
 $env:BOT_PROJECT_ROOT = $projectRoot
 
-& $nodeExe $nodeScript --mode $mode --content $contentPath --state $statePath --screenshot $screenshotPath --port "$($botConfig.Browser.DebugPort)"
+& $nodeExe $nodeScript --mode $mode --content $contentPath --state $statePath --screenshot $screenshotPath --port "$($botConfig.Browser.DebugPort)" --account $accountPreference
 if ($LASTEXITCODE -ne 0) {
     throw "LinkedIn draft helper failed with exit code $LASTEXITCODE."
 }

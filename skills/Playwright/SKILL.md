@@ -37,6 +37,8 @@ Use these local wrappers for logged-in social composition workflows that must le
 10. **RESEARCH FIRST:** If the task is to discover the latest post, inspect a public site, or find data hidden in scripts/feeds/assets, do not jump to Playwright. Prefer fetch/HTML/JS/RSS/JSON inspection first, then use Playwright only for the final interaction step if still needed.
 11. **DO NOT GUESS ROUTES:** Before trying `/blog`, `/insights`, language paths, or other guessed URLs, inspect the root page and its raw HTML first.
 12. **SPA RULE:** If the site behaves like a shell page or dynamic app, look for referenced JS/data assets and fetch targets before opening a browser.
+13. **WEBFETCH IS FINE:** For discovery work, `WebFetch` is acceptable when it is the simplest reliable way to inspect the page or asset before moving to Playwright.
+14. **DO NOT KEEP HUGE ASSETS IN CONTEXT:** If a JS/JSON asset is large or truncated, do not keep reading it linearly inside model context. Save it to a temporary file and search/filter that file for the needed titles, dates, slugs, keys, or URLs.
 
 ---
 

@@ -41,6 +41,33 @@ def wait_for_debugger(debug_port, timeout_seconds):
     return False
 
 
+def is_chrome_profile_locked(user_data_dir):
+    if not user_data_dir or not os.path.exists(user_data_dir):
+        return False
+
+    lock_candidates = (
+        'SingletonLock',
+        'SingletonCookie',
+        'SingletonSocket',
+        'lockfile',
+    )
+    return any(os.path.exists(os.path.join(user_data_dir, name)) for name in lock_candidates)
+
+
+def resolve_chrome_launch_profile(project_root):
+    playwright_profile_dir = os.environ.get('PLAYWRIGHT_PROFILE_DIR', os.path.join(project_root, 'profiles', 'playwright'))
+    chrome_profile_dir = os.environ.get('CHROME_PROFILE_DIR', '').strip()
+    candidate = chrome_profile_dir if chrome_profile_dir else playwright_profile_dir
+    normalized = candidate.rstrip('\\/')
+    base_name = os.path.basename(normalized)
+    parent_dir = os.path.dirname(normalized)
+
+    if os.path.basename(parent_dir).lower() == 'user data' and base_name:
+        return parent_dir, base_name
+
+    return normalized, ''
+
+
 def comparable_hostname(value):
     if not value:
         return ''
@@ -49,6 +76,10 @@ def comparable_hostname(value):
         return (urlparse(value).hostname or '').lower()
     except Exception:
         return ''
+
+
+FAST_NAV_TIMEOUT_MS = 15000
+FAST_RENDER_SETTLE_SECONDS = 1.0
 
 
 def pick_reusable_page(context, target_url):
@@ -65,20 +96,27 @@ def pick_reusable_page(context, target_url):
     return pages[-1]
 
 
-def ensure_managed_chrome(chrome_executable, profile_dir, debug_port, start_url):
+def ensure_managed_chrome(chrome_executable, user_data_dir, profile_directory, debug_port, start_url):
     if wait_for_debugger(debug_port, 1):
         return
+
+    if is_chrome_profile_locked(user_data_dir):
+        raise RuntimeError(
+            f'Bot Chrome profile is already open without remote debugging on port {debug_port}. '
+            'Close that Chrome window or relaunch it with Launch-BotChrome.'
+        )
 
     creation_flags = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
     args = [
         chrome_executable,
         f'--remote-debugging-port={debug_port}',
-        f'--user-data-dir={profile_dir}',
+        f'--user-data-dir={user_data_dir}',
         '--no-first-run',
         '--no-default-browser-check',
-        '--new-window',
-        start_url,
     ]
+    if profile_directory:
+        args.append(f'--profile-directory={profile_directory}')
+    args.extend(['--new-window', start_url])
     subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creation_flags)
 
     if not wait_for_debugger(debug_port, 30):
@@ -87,17 +125,15 @@ def ensure_managed_chrome(chrome_executable, profile_dir, debug_port, start_url)
 
 def human_browser_task(action, url_arg, output_path=None):
     project_root = os.environ.get('BOT_PROJECT_ROOT', os.getcwd())
-    playwright_profile_dir = os.environ.get('PLAYWRIGHT_PROFILE_DIR', os.path.join(project_root, 'profiles', 'playwright'))
-    chrome_profile_dir = os.environ.get('CHROME_PROFILE_DIR', playwright_profile_dir)
     chrome_executable = os.environ.get('CHROME_EXECUTABLE', r'C:\Program Files\Google\Chrome\Application\chrome.exe')
     browser_locale = os.environ.get('BROWSER_LOCALE', 'en-US')
     browser_timezone = os.environ.get('BROWSER_TIMEZONE', 'UTC')
-    debug_port = int(os.environ.get('BROWSER_DEBUG_PORT', '9222'))
+    debug_port = int(os.environ.get('BROWSER_DEBUG_PORT', '9333'))
     keep_open = env_bool('BROWSER_KEEP_OPEN', True)
-    profile_dir = playwright_profile_dir if playwright_profile_dir.strip() else chrome_profile_dir
+    user_data_dir, profile_directory = resolve_chrome_launch_profile(project_root)
     start_url = 'https://www.google.com' if action in ('SearchGoogle', 'GoogleTopResultsScreenshots') else url_arg
 
-    ensure_managed_chrome(chrome_executable, profile_dir, debug_port, start_url)
+    ensure_managed_chrome(chrome_executable, user_data_dir, profile_directory, debug_port, start_url)
 
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(f'http://127.0.0.1:{debug_port}')
@@ -221,7 +257,8 @@ def human_browser_task(action, url_arg, output_path=None):
                 stealth.apply_stealth_sync(page)
                 page.bring_to_front()
                 if (not page.url) or page.url == 'about:blank' or comparable_hostname(page.url) != comparable_hostname(url_arg):
-                    page.goto(url_arg, wait_until='networkidle', timeout=60000)
+                    page.goto(url_arg, wait_until='domcontentloaded', timeout=FAST_NAV_TIMEOUT_MS)
+                    time.sleep(FAST_RENDER_SETTLE_SECONDS)
                 print('Browser is open and will remain available for reuse.')
             else:
                 page = pick_reusable_page(context, url_arg) or context.new_page()
@@ -231,8 +268,13 @@ def human_browser_task(action, url_arg, output_path=None):
                 same_host = comparable_hostname(page.url) and comparable_hostname(page.url) == comparable_hostname(url_arg)
                 if not same_host:
                     time.sleep(random.uniform(2, 4))
-                    page.goto(url_arg, wait_until='domcontentloaded', timeout=60000, referer=referer)
-                    time.sleep(random.uniform(3, 7))
+                    wait_until = 'domcontentloaded' if action == 'GetContent' else 'domcontentloaded'
+                    timeout = FAST_NAV_TIMEOUT_MS if action == 'GetContent' else 60000
+                    page.goto(url_arg, wait_until=wait_until, timeout=timeout, referer=referer)
+                    if action == 'GetContent':
+                        time.sleep(FAST_RENDER_SETTLE_SECONDS)
+                    else:
+                        time.sleep(random.uniform(3, 7))
 
                 for _ in range(random.randint(2, 4)):
                     page.mouse.move(random.randint(200, 1000), random.randint(200, 800))

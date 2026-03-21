@@ -10,24 +10,14 @@ function Get-OpenCodeTaskEnvelope {
         return ""
     }
 
-    $baseText = @"
-Use specialized project sub-agents only if they are clearly needed for part of the work.
-Available specialized agents inside OpenCode include browser, docs, sheets, computer, and social. Decide yourself whether any are needed.
-Do not report success just because an action was attempted. Verify the resulting state first.
-For browser, UI, and website workflows, success must be based on observable postconditions such as the expected editor being visible, the expected text appearing in the page, the expected file existing, or the expected section being active.
-If the expected result cannot be verified, explicitly say the workflow ended in an ambiguous or unverified state and stop instead of improvising more actions.
-Do not invoke a local Playwright skill just because the repository contains one. For public-site research, latest-item discovery, and site inspection, prefer fetch-style inspection, direct HTML/JSON/RSS/script retrieval, and static asset analysis first.
-When using fetch or WebFetch on a public site, inspect the structure of the current page and its referenced assets before deriving or testing additional URLs.
-Do not guess derived site routes or alternate paths before inspecting the root page and understanding how the site is structured.
-If the task is to find the latest item on a public site, inspect the raw HTML of the root or known landing page before guessing additional URLs.
-If markdown/text extraction hides site structure, scripts, or asset references, switch to raw HTML inspection so you can see script tags, imports, fetch targets, and static asset paths.
-If the site appears to be a single-page app or a shell page, look for referenced JS, JSON, RSS, sitemap, fetch calls, imports, or data files before escalating to Playwright.
-Do not assume the local Playwright capability in this repository is read-only. Local Playwright-based helpers and custom scripts may be used for interactive browser workflows before considering live desktop control.
-If you cannot continue reliably without live Windows desktop control through the local Windows-Use skill, stop and return this exact block and nothing more:
-[WINDOWS_USE_FALLBACK_REQUIRED]
-Task: <single-line bounded Windows-Use task for the local orchestrator>
-Reason: <brief reason>
-Do not claim you used the local Windows-Use skill yourself.
+    $skillPrefix = Get-OpenCodeSkillPrefix -Task $normalizedTask -PreferredAgent $PreferredAgent
+$baseText = @"
+$skillPrefix
+Verify success from observed state, not attempted action.
+Use `web-inspect` first for public-site discovery or latest-item tasks.
+Prefer not to pull large JS/JSON/RSS/XML assets into model context when the same result can be obtained by local filtering or targeted extraction. Save tokens when possible.
+For short social posts, stop at the minimum source package: title, final URL, date, and 1-3 key points.
+Use `playwright` only when rendered DOM behavior or interaction is truly required.
 
 Task:
 $normalizedTask
@@ -38,6 +28,34 @@ $normalizedTask
     }
 
     return $baseText
+}
+
+function Get-OpenCodeSkillPrefix {
+    param(
+        [string]$Task,
+        [string]$PreferredAgent = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Task)) {
+        return ""
+    }
+
+    $normalizedTask = $Task.ToLowerInvariant()
+    $agentHint = if ([string]::IsNullOrWhiteSpace($PreferredAgent)) { "" } else { $PreferredAgent.Trim().ToLowerInvariant() }
+
+    $mentionsSite = $normalizedTask -match 'https?://|www\.|(?:\b[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s]*)?|\bsite\b|\bwebsite\b|\bweb\b|\bsitio\b|\bp[aá]gina\b'
+    $mentionsDiscovery = $normalizedTask -match 'latest|newest|most recent|ultimo|último|penultimate|penultimo|penúltimo|find|encuentra|busca|discover|inspect|inspecciona|extract|extrae|url|blog|article|articulo|artículo|news|post'
+    $mentionsInteraction = $normalizedTask -match 'publish|publica|publicar|tweet|twitter|x\.com|linkedin|login|log in|sign in|draft|borrador|click|haz clic|type|typing|paste|pega|reply|comment|composer|editor'
+
+    if ($mentionsSite -and $mentionsDiscovery) {
+        return "/web-inspect"
+    }
+
+    if ($agentHint -eq "social" -or ($mentionsSite -and $mentionsInteraction)) {
+        return "/playwright"
+    }
+
+    return ""
 }
 
 function Get-GoogleScreenshotQueryFromTask {
@@ -172,11 +190,27 @@ function Test-TaskRequiresResearchBeforeDraft {
     }
 
     $normalizedTask = $Task.ToLowerInvariant()
-    $mentionsDiscovery = $normalizedTask -match 'latest|newest|most recent|ultimo|último|encuentra|find|busca|extract|extrae|summary|resumen'
+    $mentionsDiscovery = $normalizedTask -match 'latest|newest|most recent|ultimo|último|penultimate|penultimo|penúltimo|previous|anterior|encuentra|find|busca|extract|extrae|summary|resumen|review|revisa|read|lee|analyze|analiza'
     $mentionsSource = $normalizedTask -match 'blog|article|articulo|artículo|news|noticia|post'
-    $mentionsDraftTarget = $normalizedTask -match 'tweet|x\.com|twitter|linkedin|post draft|nuevo post|create a post|create a tweet|compose'
+    $mentionsDraftTarget = $normalizedTask -match 'tweet|x\.com|twitter|linkedin|social post|post draft|nuevo post|create a post|create a tweet|compose|publish(?:ing)?\s+(?:a\s+)?post|publica(?:r)?\s+(?:un(?:a)?\s+)?post|publicaci[oó]n'
 
     return ($mentionsDiscovery -and $mentionsSource -and $mentionsDraftTarget)
+}
+
+function Test-TaskRequestsFinalPublish {
+    param(
+        [string]$Task
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Task)) {
+        return $false
+    }
+
+    $normalizedTask = $Task.ToLowerInvariant()
+    $mentionsPublish = $normalizedTask -match 'publish|publica|publicar|publishing|post it|send it|submit it|click post|click publish|haz clic en publicar|pulsa publicar|presiona publicar'
+    $mentionsNoPublish = $normalizedTask -match "don't publish|do not publish|no publish|no publicar|no lo publiques|sin publicar|leave it as draft|dejalo como borrador|déjalo como borrador|manual review|manually publish|manualmente"
+
+    return ($mentionsPublish -and -not $mentionsNoPublish)
 }
 
 function Test-ShouldUseLocalInteractiveBrowserTask {
@@ -200,7 +234,8 @@ function New-OpenCodeExecutionPlan {
     param(
         [string]$Task,
         [string[]]$EnableMCPs = @(),
-        [string]$PreferredAgent = ""
+        [string]$PreferredAgent = "",
+        [bool]$AllowLocalScriptShortcuts = $false
     )
 
     $normalizedTask = if ($null -ne $Task) { $Task.ToLowerInvariant() } else { "" }
@@ -212,7 +247,7 @@ function New-OpenCodeExecutionPlan {
     $timeoutSec = 1800
     $extraInstructions = ""
     $explicitAgent = if ([string]::IsNullOrWhiteSpace($PreferredAgent)) { "" } else { $PreferredAgent.Trim().ToLowerInvariant() }
-
+    $requiresPublishApproval = Test-TaskRequestsFinalPublish -Task $Task
     if ($explicitAgent -in @("build", "browser", "docs", "sheets", "computer", "social")) {
         switch ($explicitAgent) {
             "browser" {
@@ -235,20 +270,16 @@ function New-OpenCodeExecutionPlan {
                 $capability = "social"
                 $label = "OpenCode Social"
                 $extraInstructions = @"
-This is a logged-in social website workflow.
-Prefer browser automation inside OpenCode for website interaction, typing, clicking, and editor input.
-Do not assume the repository Playwright capability is limited to read-only extraction. Local Playwright wrappers and custom Playwright scripts are valid options for interactive website workflows.
-If the task first requires researching a public site to discover the latest content or extract source material, do that research without Playwright first. Only use Playwright after the final content and target page are known.
-Do not request Windows-Use just because the task involves filling a website form, pressing website buttons, or pasting text into a web editor.
-Only escalate to Windows-Use after a concrete browser attempt fails due to an actual blocker such as anti-bot defenses, native OS dialogs, or browser-tool limitations that were encountered in practice.
-If login is required or the site is not authenticated, leave the browser open on the login page and return exactly:
+This is a logged-in social workflow.
+Prefer the repository Playwright helpers for X/LinkedIn, not a generic built-in browser flow.
+Do not use Microsoft Edge or the system default browser for these repository Playwright workflows. Use the configured bot Chrome / Chrome-profile flow exposed by the repository helpers.
+When invoking repository wrappers such as Invoke-XDraft.ps1, Invoke-LinkedInDraft.ps1, or Invoke-WebInteractive.ps1, always pass the task through a UTF-8 temporary .txt file via -TaskFile instead of inline text parameters.
+If research is needed first, do that before browser interaction.
+If login is required, leave the browser open and return exactly:
 [LOGIN_REQUIRED]
 Site: <site name>
 Reason: <brief reason>
-Do not close the browser in that case.
-If the task says not to publish, stop before the final publish/submit action and leave the draft ready for the user.
-Preserve the provided text exactly.
-Do not treat "clicked Start a post" as success by itself. Verify that the composer is visible and that the expected text appears inside it before reporting the draft ready.
+Do not close the browser in that case. Preserve provided text exactly. Use 0-3 emojis. Keep X single posts within 280 chars. Verify the visible composer/text state before reporting draft ready.
 "@.Trim()
             }
         }
@@ -273,23 +304,20 @@ Use browser or webmail only if the user explicitly asked for Gmail, Outlook Web,
     if ($capability -ne "outlook" -and $capability -ne "social" -and $normalizedTask -match $browserPattern) {
         $capability = "browser"
         $extraInstructions = @"
-This is a web task. Choose the simplest reliable method first.
-Prefer ordinary fetch-style inspection, direct page retrieval, feeds, sitemaps, structured data, and referenced static assets/scripts before using Playwright.
-If the site exposes the needed data in HTML, JSON, RSS, JS, or another static resource, extract it directly instead of opening a browser.
-Use Playwright only when rendering, interaction, login state, or browser-only behavior is actually required.
-The mere presence of a local Playwright skill in the repository is not a reason to use it for discovery tasks.
-When using fetch or WebFetch, inspect the current page structure and the assets it references before deriving new URLs.
-Do not guess multiple candidate URLs before inspecting the root page. First fetch the raw HTML of the root or known landing page and inspect its scripts, imports, data files, and fetch targets.
-If the site looks like an SPA or the expected content is missing from the returned body, assume the data may live in a JS/JSON asset and investigate that path before using Playwright.
-When markdown-style extraction hides implementation details, ask for raw HTML so script tags and static asset references remain visible.
-When interaction is required, do not assume the repository Playwright capability is read-only. Local Playwright helpers and custom scripts can handle interactive browser actions before any desktop-control fallback.
-For exploratory tasks such as finding the latest post, newest item, hidden endpoint, or site structure, investigate the site directly instead of assuming a Playwright flow.
+This is a web task. Use the simplest reliable method first.
+Use `web-inspect` before broad WebFetch reads when a known page or discovered asset URL is available.
+For discovery tasks, inspect root pages and referenced assets before guessing routes.
+For SPA/data-file sites, inspect the asset directly and extract only needed fields.
+For large JS/JSON/RSS/XML assets, prefer local filtering or targeted extraction instead of pulling the whole body into model context when that saves tokens.
+When the task depends on choosing the correct item from a set, identify the candidate list first and inspect only the selected item afterward.
+If you need to hand post text or long instructions to a repository script, write them to a UTF-8 temporary .txt file and pass that file path instead of inline text.
+Use Playwright only when rendering or interaction is truly required.
+If the downstream goal is a short post, stop at the minimum source package instead of writing a long intermediate summary.
 Do not restart steps that already succeeded.
-If the task is to capture screenshots of the first Google results, prefer the local Playwright wrapper action GoogleTopResultsScreenshots.
 "@.Trim()
     }
 
-    if (Test-ShouldUseLocalGoogleResultsScreenshots -Task $Task) {
+    if ($AllowLocalScriptShortcuts -and (Test-ShouldUseLocalGoogleResultsScreenshots -Task $Task)) {
         $query = Get-GoogleScreenshotQueryFromTask -Task $Task
         if (-not [string]::IsNullOrWhiteSpace($query)) {
             $quotedQuery = Convert-ToPowerShellSingleQuotedLiteral -Value $query
@@ -312,7 +340,26 @@ If the task is to capture screenshots of the first Google results, prefer the lo
         }
     }
 
-    if ((Test-ShouldUseLocalLinkedInDraft -Task $Task) -and (Test-TaskHasEmbeddedDraftContent -Task $Task) -and -not (Test-TaskRequiresResearchBeforeDraft -Task $Task)) {
+    if ($requiresPublishApproval) {
+        $publishInstructions = @"
+Do not click the final irreversible Post/Publish/Send/Submit button yourself.
+Prepare and verify the draft, leave the target page open with the final button visible, and then return this exact marker block:
+[PUBLISH_CONFIRMATION_REQUIRED]
+Site: <site name>
+Task: <single-line bounded Windows-Use task for clicking the final publish/send button in the already-open browser>
+Reason: <brief reason>
+If the draft could not be prepared and verified first, do not return this marker.
+"@.Trim()
+
+        if ([string]::IsNullOrWhiteSpace($extraInstructions)) {
+            $extraInstructions = $publishInstructions
+        }
+        else {
+            $extraInstructions = ($extraInstructions + "`n`n" + $publishInstructions).Trim()
+        }
+    }
+
+    if ($AllowLocalScriptShortcuts -and (Test-ShouldUseLocalLinkedInDraft -Task $Task) -and (Test-TaskHasEmbeddedDraftContent -Task $Task) -and -not (Test-TaskRequiresResearchBeforeDraft -Task $Task)) {
         return [PSCustomObject]@{
             Capability = "social"
             Agent = $null
@@ -328,7 +375,7 @@ If the task is to capture screenshots of the first Google results, prefer the lo
         }
     }
 
-    if ((Test-ShouldUseLocalXDraft -Task $Task) -and (Test-TaskHasEmbeddedDraftContent -Task $Task) -and -not (Test-TaskRequiresResearchBeforeDraft -Task $Task)) {
+    if ($AllowLocalScriptShortcuts -and (Test-ShouldUseLocalXDraft -Task $Task) -and (Test-TaskHasEmbeddedDraftContent -Task $Task) -and -not (Test-TaskRequiresResearchBeforeDraft -Task $Task)) {
         return [PSCustomObject]@{
             Capability = "social"
             Agent = $null
@@ -344,7 +391,7 @@ If the task is to capture screenshots of the first Google results, prefer the lo
         }
     }
 
-    if ((Test-ShouldUseLocalInteractiveBrowserTask -Task $Task) -and -not (Test-TaskRequiresResearchBeforeDraft -Task $Task)) {
+    if ($AllowLocalScriptShortcuts -and (Test-ShouldUseLocalInteractiveBrowserTask -Task $Task) -and -not (Test-TaskRequiresResearchBeforeDraft -Task $Task)) {
         return [PSCustomObject]@{
             Capability = "browser"
             Agent = $null

@@ -117,6 +117,7 @@ function Import-BotSettings {
             OpenRouterApiKey = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENROUTER_API_KEY" -JsonPath "llm.openRouterApiKey" -DefaultValue ""
             PrimaryModel     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_PRIMARY_MODEL" -JsonPath "llm.primaryModel" -DefaultValue "xiaomi/mimo-v2-omni"
             SecondaryModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_SECONDARY_MODEL" -JsonPath "llm.secondaryModel" -DefaultValue "qwen/qwen3.5-27b"
+            MultimodalModel  = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_MULTIMODAL_MODEL" -JsonPath "llm.multimodalModel" -DefaultValue "xiaomi/mimo-v2-omni"
             ReasoningEffort  = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_REASONING_EFFORT" -JsonPath "llm.reasoningEffort" -DefaultValue "medium"
             ResponseLanguage = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BOT_RESPONSE_LANGUAGE" -JsonPath "llm.responseLanguage" -DefaultValue "English"
         }
@@ -128,7 +129,7 @@ function Import-BotSettings {
             Command        = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_COMMAND" -JsonPath "opencode.command" -DefaultValue "opencode"
             ConfigPath     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_CONFIG_PATH" -JsonPath "opencode.configPath" -DefaultValue (Join-Path $env:USERPROFILE ".config\opencode\opencode.json")
             Transport      = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_TRANSPORT" -JsonPath "opencode.transport" -DefaultValue "cli"
-            DefaultModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_DEFAULT_MODEL" -JsonPath "opencode.defaultModel" -DefaultValue "opencode/MiMo-V2-Pro-Free"
+            DefaultModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_DEFAULT_MODEL" -JsonPath "opencode.defaultModel" -DefaultValue "opencode/kimi-k2.5"
             Packs          = [PSCustomObject]@{
                 Browser = $browserPackEnabled
                 Docs = $docsPackEnabled
@@ -143,7 +144,7 @@ function Import-BotSettings {
             PlaywrightProfileDir = $playwrightProfileDir
             Locale             = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_LOCALE" -JsonPath "browser.locale" -DefaultValue "en-US"
             Timezone           = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_TIMEZONE" -JsonPath "browser.timezone" -DefaultValue "UTC"
-            DebugPort          = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_DEBUG_PORT" -JsonPath "browser.debugPort" -DefaultValue 9222)
+            DebugPort          = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_DEBUG_PORT" -JsonPath "browser.debugPort" -DefaultValue 9333)
             KeepOpen           = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_KEEP_OPEN" -JsonPath "browser.keepOpen" -DefaultValue $true))
         }
         WindowsUse = [PSCustomObject]@{
@@ -164,4 +165,56 @@ function Import-BotSettings {
             PersonalDataFile = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "PERSONAL_DATA_FILE" -JsonPath "paths.personalDataFile" -DefaultValue (Join-Path $root "PERSONAL DATA.local.md")
         }
     }
+}
+
+function Set-PersistentReasoningEffort {
+    param(
+        [string]$ProjectRoot,
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "Reasoning effort value cannot be empty."
+    }
+
+    $normalizedValue = $Value.Trim().ToLowerInvariant()
+    if ($normalizedValue -notin @("low", "medium", "high", "none")) {
+        throw "Unsupported reasoning effort: $Value"
+    }
+
+    $root = Get-BotProjectRoot -ProjectRoot $ProjectRoot
+    $settingsPath = Join-Path $root "config\settings.json"
+    $settingsExamplePath = Join-Path $root "config\settings.example.json"
+
+    $jsonConfig = $null
+    if (Test-Path $settingsPath) {
+        $raw = Get-Content $settingsPath -Raw -ErrorAction Stop
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            $jsonConfig = $raw | ConvertFrom-Json -ErrorAction Stop
+        }
+    }
+    elseif (Test-Path $settingsExamplePath) {
+        $raw = Get-Content $settingsExamplePath -Raw -ErrorAction Stop
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            $jsonConfig = $raw | ConvertFrom-Json -ErrorAction Stop
+        }
+    }
+
+    if ($null -eq $jsonConfig) {
+        $jsonConfig = [pscustomobject]@{}
+    }
+
+    if (-not $jsonConfig.PSObject.Properties["llm"] -or $null -eq $jsonConfig.llm) {
+        $jsonConfig | Add-Member -NotePropertyName "llm" -NotePropertyValue ([pscustomobject]@{})
+    }
+
+    if ($jsonConfig.llm.PSObject.Properties["reasoningEffort"]) {
+        $jsonConfig.llm.reasoningEffort = $normalizedValue
+    }
+    else {
+        $jsonConfig.llm | Add-Member -NotePropertyName "reasoningEffort" -NotePropertyValue $normalizedValue
+    }
+
+    $jsonConfig | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding UTF8
+    return $normalizedValue
 }

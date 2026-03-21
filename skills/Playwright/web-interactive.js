@@ -115,20 +115,63 @@ async function waitForDebugger(debugPort, timeoutMs) {
     return false;
 }
 
-async function ensureManagedChrome({ chromeExecutable, profileDir, debugPort, startUrl }) {
+function isChromeProfileLocked(userDataDir) {
+    if (!userDataDir || !fs.existsSync(userDataDir)) {
+        return false;
+    }
+
+    const lockCandidates = [
+        'SingletonLock',
+        'SingletonCookie',
+        'SingletonSocket',
+        'lockfile'
+    ];
+
+    return lockCandidates.some(name => fs.existsSync(path.join(userDataDir, name)));
+}
+
+function resolveChromeLaunchProfile(projectRoot) {
+    const playwrightProfilePath = process.env.PLAYWRIGHT_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
+    const chromeProfilePath = process.env.CHROME_PROFILE_DIR || '';
+    const candidate = (chromeProfilePath && chromeProfilePath.trim()) ? chromeProfilePath.trim() : playwrightProfilePath;
+    const normalized = candidate.replace(/[\\/]+$/, '');
+    const baseName = path.basename(normalized);
+    const parentDir = path.dirname(normalized);
+    const grandParentName = path.basename(parentDir).toLowerCase();
+
+    if (grandParentName === 'user data' && baseName) {
+        return {
+            userDataDir: parentDir,
+            profileDirectory: baseName,
+        };
+    }
+
+    return {
+        userDataDir: normalized,
+        profileDirectory: '',
+    };
+}
+
+async function ensureManagedChrome({ chromeExecutable, userDataDir, profileDirectory, debugPort, startUrl }) {
     const ready = await waitForDebugger(debugPort, 1000);
     if (ready) {
         return false;
     }
 
+    if (isChromeProfileLocked(userDataDir)) {
+        throw new Error(`Bot Chrome profile is already open without remote debugging on port ${debugPort}. Close that Chrome window or relaunch it with Launch-BotChrome.`);
+    }
+
     const args = [
         `--remote-debugging-port=${debugPort}`,
-        `--user-data-dir=${profileDir}`,
+        `--user-data-dir=${userDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
-        '--new-window',
-        startUrl,
     ];
+    if (profileDirectory) {
+        args.push(`--profile-directory=${profileDirectory}`);
+    }
+    args.push('--new-window', startUrl);
 
     const child = spawn(chromeExecutable, args, {
         detached: true,
@@ -674,11 +717,11 @@ async function run() {
     const args = parseArgs(process.argv.slice(2));
     const projectRoot = process.env.BOT_PROJECT_ROOT || process.cwd();
     const chromeExecutable = process.env.CHROME_EXECUTABLE || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-    const profilePath = process.env.PLAYWRIGHT_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
+    const launchProfile = resolveChromeLaunchProfile(projectRoot);
     const outputScreenshot = args.screenshot || path.join(projectRoot, 'archives', 'web-interactive.png');
     const statePath = args.state || path.join(projectRoot, 'archives', 'web-interactive-state.json');
     const taskPath = args.task;
-    const debugPort = Number.parseInt(args.port || process.env.BROWSER_DEBUG_PORT || '9222', 10);
+    const debugPort = Number.parseInt(args.port || process.env.BROWSER_DEBUG_PORT || '9333', 10);
     const taskText = readRequiredText(taskPath, 'Task');
     const startUrl = extractStartUrl(taskText);
     const profile = detectSiteProfile(taskText, startUrl);
@@ -695,7 +738,7 @@ async function run() {
 
     ensureDirForFile(outputScreenshot);
     ensureDirForFile(statePath);
-    fs.mkdirSync(profilePath, { recursive: true });
+    fs.mkdirSync(launchProfile.userDataDir, { recursive: true });
 
     writeState(statePath, {
         status: 'starting',
@@ -706,7 +749,8 @@ async function run() {
 
     await ensureManagedChrome({
         chromeExecutable,
-        profileDir: profilePath,
+        userDataDir: launchProfile.userDataDir,
+        profileDirectory: launchProfile.profileDirectory,
         debugPort,
         startUrl: profile.startUrl,
     });

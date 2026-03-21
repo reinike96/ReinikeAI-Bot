@@ -1,5 +1,6 @@
 param(
     [Parameter(Mandatory = $false)]
+    [Alias("Text")]
     [string]$TaskText = "",
 
     [Parameter(Mandatory = $false)]
@@ -78,6 +79,31 @@ function Test-LooksLikeXMetaText {
     }
 
     return ($hits -ge 2)
+}
+
+function Get-XDraftMode {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return "single"
+    }
+
+    $normalized = $Text.ToLowerInvariant()
+    if ($normalized -match '\bthread\b|hilo|multi-post|multiple posts|serie de posts') {
+        return "thread"
+    }
+
+    return "single"
+}
+
+function Get-TextElementCount {
+    param([string]$Text)
+
+    if ($null -eq $Text) {
+        return 0
+    }
+
+    return ([System.Globalization.StringInfo]::new($Text)).LengthInTextElements
 }
 
 function Resolve-ExecutablePath {
@@ -162,7 +188,16 @@ if ([string]::IsNullOrWhiteSpace($effectiveTaskText)) {
 
 $postContent = Get-XPostContent -Text $effectiveTaskText
 if ([string]::IsNullOrWhiteSpace($postContent)) {
+    $postContent = $effectiveTaskText.Trim()
+}
+if ([string]::IsNullOrWhiteSpace($postContent)) {
     throw "Could not extract the X post content from the task."
+}
+
+$draftMode = Get-XDraftMode -Text $effectiveTaskText
+$characterCount = Get-TextElementCount -Text $postContent
+if ($draftMode -ne "thread" -and $characterCount -gt 280) {
+    throw "X post content is $characterCount characters long. A single X post must be 280 characters or fewer. Ask for a shorter post or explicitly request a thread."
 }
 
 $archivesDir = $botConfig.Paths.ArchivesDir
@@ -187,6 +222,7 @@ $env:BROWSER_LOCALE = $botConfig.Browser.Locale
 $env:BROWSER_TIMEZONE = $botConfig.Browser.Timezone
 $env:BROWSER_DEBUG_PORT = "$($botConfig.Browser.DebugPort)"
 $env:BROWSER_KEEP_OPEN = if ([bool]$botConfig.Browser.KeepOpen) { "true" } else { "false" }
+$env:X_DRAFT_MODE = $draftMode
 $env:BOT_PROJECT_ROOT = $projectRoot
 
 & $nodeExe $nodeScript --content $contentPath --state $statePath --screenshot $screenshotPath --port "$($botConfig.Browser.DebugPort)"

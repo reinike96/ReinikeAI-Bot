@@ -115,20 +115,63 @@ async function waitForDebugger(debugPort, timeoutMs) {
     return false;
 }
 
-async function ensureManagedChrome({ chromeExecutable, profileDir, debugPort, startUrl }) {
+function isChromeProfileLocked(userDataDir) {
+    if (!userDataDir || !fs.existsSync(userDataDir)) {
+        return false;
+    }
+
+    const lockCandidates = [
+        'SingletonLock',
+        'SingletonCookie',
+        'SingletonSocket',
+        'lockfile'
+    ];
+
+    return lockCandidates.some(name => fs.existsSync(path.join(userDataDir, name)));
+}
+
+function resolveChromeLaunchProfile(projectRoot) {
+    const playwrightProfilePath = process.env.PLAYWRIGHT_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
+    const chromeProfilePath = process.env.CHROME_PROFILE_DIR || '';
+    const candidate = (chromeProfilePath && chromeProfilePath.trim()) ? chromeProfilePath.trim() : playwrightProfilePath;
+    const normalized = candidate.replace(/[\\/]+$/, '');
+    const baseName = path.basename(normalized);
+    const parentDir = path.dirname(normalized);
+    const grandParentName = path.basename(parentDir).toLowerCase();
+
+    if (grandParentName === 'user data' && baseName) {
+        return {
+            userDataDir: parentDir,
+            profileDirectory: baseName,
+        };
+    }
+
+    return {
+        userDataDir: normalized,
+        profileDirectory: '',
+    };
+}
+
+async function ensureManagedChrome({ chromeExecutable, userDataDir, profileDirectory, debugPort, startUrl }) {
     const ready = await waitForDebugger(debugPort, 1000);
     if (ready) {
         return false;
     }
 
+    if (isChromeProfileLocked(userDataDir)) {
+        throw new Error(`Bot Chrome profile is already open without remote debugging on port ${debugPort}. Close that Chrome window or relaunch it with Launch-BotChrome.`);
+    }
+
     const args = [
         `--remote-debugging-port=${debugPort}`,
-        `--user-data-dir=${profileDir}`,
+        `--user-data-dir=${userDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
-        '--new-window',
-        startUrl,
     ];
+    if (profileDirectory) {
+        args.push(`--profile-directory=${profileDirectory}`);
+    }
+    args.push('--new-window', startUrl);
 
     const child = spawn(chromeExecutable, args, {
         detached: true,
@@ -256,9 +299,13 @@ async function isLoginRequired(page) {
 
 async function hasVisibleComposer(page) {
     const selectors = [
-        'div[data-testid="tweetTextarea_0"]',
+        'div[data-testid^="tweetTextarea_"] div[role="textbox"]',
+        'div[data-testid^="tweetTextarea_"] [contenteditable="true"]',
+        'div[role="dialog"] div[role="textbox"][contenteditable="true"]',
+        'div[role="dialog"] [contenteditable="true"]',
         'div[data-testid^="tweetTextarea_"]',
-        'div[role="textbox"][contenteditable="true"]'
+        'div[role="textbox"][contenteditable="true"]',
+        'div[data-testid="tweetTextarea_0"]'
     ];
 
     for (const selector of selectors) {
@@ -273,27 +320,45 @@ async function hasVisibleComposer(page) {
     return false;
 }
 
-async function openComposer(page) {
-    try {
-        await page.goto('https://x.com/compose/post', { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await sleep(2500);
-        if (await hasVisibleComposer(page)) {
-            return true;
-        }
-    } catch {}
+async function clickComposerTrigger(page) {
+    // Dismiss any lingering overlays before clicking
+    await dismissCookieConsent(page).catch(() => {});
+    await sleep(500);
 
     const selectors = [
         'a[data-testid="SideNav_NewTweet_Button"]',
         'button[data-testid="SideNav_NewTweet_Button"]',
-        '[aria-label="Post"]',
-        '[aria-label="Tweet"]'
+        'div[data-testid="SideNav_NewTweet_Button"]',
+        'a[href="/compose/post"]',
+        'button[aria-label="Post"]',
+        'a[aria-label="Post"]',
+        'button[aria-label="Tweet"]',
+        'a[aria-label="Tweet"]'
     ];
 
     for (const selector of selectors) {
         try {
             const button = page.locator(selector).first();
-            if (await button.count() > 0) {
+            if (await button.count() > 0 && await button.isVisible({ timeout: 1000 })) {
                 await button.click({ timeout: 5000 });
+                await sleep(1500);
+                if (await hasVisibleComposer(page)) {
+                    return true;
+                }
+            }
+        } catch {}
+    }
+
+    const roleLocators = [
+        page.getByRole('link', { name: /post|tweet|compose/i }).first(),
+        page.getByRole('button', { name: /post|tweet|compose/i }).first(),
+        page.getByText(/what'?s happening|post|tweet/i).first(),
+    ];
+
+    for (const locator of roleLocators) {
+        try {
+            if (await locator.count() > 0 && await locator.isVisible({ timeout: 1000 })) {
+                await locator.click({ timeout: 5000 });
                 await sleep(1500);
                 if (await hasVisibleComposer(page)) {
                     return true;
@@ -305,18 +370,97 @@ async function openComposer(page) {
     return false;
 }
 
+async function dismissCookieConsent(page) {
+    // First, try to remove the cookie consent mask via DOM manipulation
+    try {
+        await page.evaluate(() => {
+            // Remove the cookie consent mask overlay
+            const mask = document.querySelector('div[data-testid="twc-cc-mask"]');
+            if (mask) mask.remove();
+            // Also remove the entire layers container that may hold the consent dialog
+            const layers = document.querySelector('div#layers');
+            if (layers) {
+                const consentDialog = layers.querySelector('[data-testid="twc-cc-mask"]');
+                if (consentDialog) consentDialog.remove();
+                // Remove any overlay siblings that block interaction
+                const children = layers.children;
+                for (let i = children.length - 1; i >= 0; i--) {
+                    const child = children[i];
+                    if (child.querySelector('[data-testid="twc-cc-mask"]') ||
+                        child.getAttribute('data-testid') === 'twc-cc-mask') {
+                        child.remove();
+                    }
+                }
+            }
+        });
+        await sleep(500);
+    } catch {}
+
+    // Try clicking actual cookie consent buttons
+    const dismissSelectors = [
+        'div[data-testid="twc-cc-mask"] button[aria-label="Close"]',
+        'div[data-testid="twc-cc-mask"] button',
+        'div[id="layers"] div[role="button"][aria-label="Close"]',
+        'button[data-testid="xMigrationBottomBar"]',
+        'span:has-text("Refuse non-essential cookies")',
+        'span:has-text("Accept all cookies")',
+        'div[role="button"]:has-text("Decline")',
+        'div[role="button"]:has-text("Accept")',
+    ];
+
+    for (const selector of dismissSelectors) {
+        try {
+            const btn = page.locator(selector).first();
+            if (await btn.count() > 0 && await btn.isVisible({ timeout: 1000 })) {
+                await btn.click({ timeout: 3000 });
+                await sleep(1000);
+                return true;
+            }
+        } catch {}
+    }
+
+    // Try pressing Escape to dismiss any overlay
+    try {
+        await page.keyboard.press('Escape');
+        await sleep(500);
+    } catch {}
+
+    // Final attempt: remove any blocking overlay via force
+    try {
+        await page.evaluate(() => {
+            const layers = document.getElementById('layers');
+            if (layers) {
+                // Remove all children that are overlays
+                while (layers.firstChild) {
+                    layers.removeChild(layers.firstChild);
+                }
+            }
+        });
+        await sleep(500);
+    } catch {}
+
+    return false;
+}
+
+async function openComposer(page) {
+    try {
+        await page.goto('https://x.com/compose/post', { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await sleep(2500);
+        if (await hasVisibleComposer(page)) {
+            return true;
+        }
+    } catch {}
+
+    return clickComposerTrigger(page);
+}
+
 async function getThreadEditors(page) {
-    const primary = page.locator('div[data-testid^="tweetTextarea_"]').filter({ has: page.locator('div[role="textbox"], div[contenteditable="true"]') });
+    const primary = page.locator('div[data-testid^="tweetTextarea_"] div[role="textbox"], div[data-testid^="tweetTextarea_"] [contenteditable="true"]');
     if (await primary.count() > 0) {
         const editors = [];
         const count = await primary.count();
         for (let index = 0; index < count; index++) {
-            const editor = primary.nth(index).locator('div[role="textbox"], div[contenteditable="true"]').first();
-            if (await editor.count() > 0) {
-                editors.push(editor);
-            } else {
-                editors.push(primary.nth(index));
-            }
+            editors.push(primary.nth(index));
         }
         return editors;
     }
@@ -351,7 +495,7 @@ async function verifyEditorContains(editor, expectedText) {
 }
 
 async function fillEditor(page, editor, text) {
-    await editor.click({ timeout: 5000 });
+    await editor.click({ timeout: 5000, force: true });
     await editor.focus().catch(() => {});
     await sleep(300);
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A').catch(() => {});
@@ -403,28 +547,31 @@ async function run() {
     const args = parseArgs(process.argv.slice(2));
     const projectRoot = process.env.BOT_PROJECT_ROOT || process.cwd();
     const chromeExecutable = process.env.CHROME_EXECUTABLE || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-    const profilePath = process.env.PLAYWRIGHT_PROFILE_DIR || path.join(projectRoot, 'profiles', 'playwright');
+    const launchProfile = resolveChromeLaunchProfile(projectRoot);
     const outputScreenshot = args.screenshot || path.join(projectRoot, 'archives', 'x-post-draft.png');
     const statePath = args.state || path.join(projectRoot, 'archives', 'x-draft-state.json');
     const contentPath = args.content;
-    const debugPort = Number.parseInt(args.port || process.env.BROWSER_DEBUG_PORT || '9222', 10);
+    const debugPort = Number.parseInt(args.port || process.env.BROWSER_DEBUG_PORT || '9333', 10);
     const postContent = readRequiredText(contentPath, 'Post content');
-    const segments = splitIntoThreadSegments(postContent);
+    const draftMode = (process.env.X_DRAFT_MODE || 'single').trim().toLowerCase();
+    const segments = draftMode === 'thread' ? splitIntoThreadSegments(postContent) : [postContent];
 
     ensureDirForFile(outputScreenshot);
     ensureDirForFile(statePath);
-    fs.mkdirSync(profilePath, { recursive: true });
+    fs.mkdirSync(launchProfile.userDataDir, { recursive: true });
 
     writeState(statePath, {
         status: 'starting',
         site: 'X.com',
         screenshot: outputScreenshot,
+        mode: draftMode,
         segments: segments.length,
     });
 
     await ensureManagedChrome({
         chromeExecutable,
-        profileDir: profilePath,
+        userDataDir: launchProfile.userDataDir,
+        profileDirectory: launchProfile.profileDirectory,
         debugPort,
         startUrl: 'https://x.com/home',
     });
@@ -449,6 +596,7 @@ async function run() {
             status: 'navigating',
             site: 'X.com',
             screenshot: outputScreenshot,
+            mode: draftMode,
             segments: segments.length,
         });
 
@@ -456,12 +604,17 @@ async function run() {
         await applyPreferredTheme(page);
         await sleep(2500);
 
+        // Dismiss cookie consent / overlays before proceeding
+        await dismissCookieConsent(page);
+        await sleep(1000);
+
         if (await isLoginRequired(page)) {
             writeState(statePath, {
                 status: 'waiting_for_login',
                 site: 'X.com',
                 reason: 'X requires authentication before the composer can be opened.',
                 screenshot: outputScreenshot,
+                mode: draftMode,
                 currentUrl: page.url(),
             });
             console.log('[LOGIN_REQUIRED]');
@@ -477,6 +630,7 @@ async function run() {
                 site: 'X.com',
                 reason: 'Could not find or open the X composer.',
                 screenshot: outputScreenshot,
+                mode: draftMode,
             });
             throw new Error('Could not find or open the X composer.');
         }
@@ -511,13 +665,23 @@ async function run() {
             site: 'X.com',
             screenshot: outputScreenshot,
             currentUrl: page.url(),
+            mode: draftMode,
             segments: segments.length,
         });
 
-        console.log('[DRAFT_READY]');
-        console.log('Site: X.com');
-        console.log(`Screenshot: ${outputScreenshot}`);
-        console.log('The browser remains open with the draft ready. Do not publish automatically.');
+console.log('[DRAFT_READY]');
+console.log('Site: X.com');
+console.log(`Screenshot: ${outputScreenshot}`);
+// Attempt to post the tweet automatically
+const postBtn = page.locator('button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]').first();
+if (await postBtn.count() > 0 && await postBtn.isVisible({ timeout: 2000 })) {
+    await postBtn.click({ timeout: 5000 });
+    await sleep(3000);
+    console.log('[POSTED]');
+} else {
+    console.log('[POST_FAILED] Post button not found');
+}
+process.exit(0);
         process.exit(0);
     } catch (error) {
         writeState(statePath, {
@@ -525,6 +689,7 @@ async function run() {
             site: 'X.com',
             reason: error.message,
             screenshot: outputScreenshot,
+            mode: draftMode,
         });
         console.error(`[ERROR] ${error.message}`);
         process.exit(1);

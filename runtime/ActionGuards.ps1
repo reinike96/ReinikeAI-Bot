@@ -55,12 +55,58 @@ function Test-OpenCodeTaskAlreadyDone {
         [string]$Task
     )
 
+    function Normalize-OpenCodeTaskForGuard {
+        param([string]$Text)
+
+        if ([string]::IsNullOrWhiteSpace($Text)) {
+            return ""
+        }
+
+        $normalized = $Text.ToLowerInvariant()
+        $normalized = [regex]::Replace($normalized, '(?is)\bpersonal data file:\s*[^.\r\n]+\.?', ' ')
+        $normalized = [regex]::Replace($normalized, '(?is)\bimportant:\s*you do not need to read the personal data file.*$', ' ')
+        $normalized = [regex]::Replace($normalized, '(?is)\bif x requires login, stop and return the \[login_required\] marker\.?', ' ')
+        $normalized = [regex]::Replace($normalized, '\s+', ' ').Trim()
+        return $normalized
+    }
+
     $historyCheck = Get-ChatMemory -chatId $ChatId
     $historySinceUser = if ($LastUserIndex -ge 0 -and $LastUserIndex -lt $historyCheck.Count) { $historyCheck[$LastUserIndex..($historyCheck.Count - 1)] } else { $historyCheck }
+    $candidate = Normalize-OpenCodeTaskForGuard -Text $Task
+
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        return $false
+    }
 
     foreach ($hMsg in $historySinceUser) {
-        if ($hMsg.role -eq "system" -and $hMsg.content -match "\[System - Task '" -and $hMsg.content -match [regex]::Escape($Task.Substring(0, [Math]::Min(40, $Task.Length)))) {
+        if ($hMsg.role -ne "system") {
+            continue
+        }
+
+        if ($hMsg.content -notmatch "^SYSTEM: Task '(?<doneTask>.+?)' completed by ") {
+            continue
+        }
+
+        $completed = Normalize-OpenCodeTaskForGuard -Text $Matches['doneTask']
+        if ([string]::IsNullOrWhiteSpace($completed)) {
+            continue
+        }
+
+        if ($completed -eq $candidate) {
             return $true
+        }
+
+        if ($completed.Contains($candidate) -or $candidate.Contains($completed)) {
+            return $true
+        }
+
+        $compareLength = [Math]::Min(120, [Math]::Min($completed.Length, $candidate.Length))
+        if ($compareLength -ge 40) {
+            $completedPrefix = $completed.Substring(0, $compareLength)
+            $candidatePrefix = $candidate.Substring(0, $compareLength)
+            if ($completedPrefix -eq $candidatePrefix) {
+                return $true
+            }
         }
     }
 
