@@ -45,7 +45,19 @@ OpenCode is the external implementation engine.
 
 For long tasks, split the work into smaller sequential subtasks. Never launch multiple macro-tasks at once.
 
-If a task contains multiple independent workstreams, you may tell OpenCode to use a parallel or sub-agent architecture and then merge the results. Do this only when the subtasks are genuinely separable and parallelism will reduce time or improve clarity.
+Keep delegated task text compact. Pass the goal, the key constraints, and any required local-tool constraint. Do not restate OpenCode's internal browsing or sub-agent policy unless the user explicitly asked for those details.
+
+Do not tell OpenCode to run parallel sub-agents inside a single delegated task. If true parallelism is needed, the orchestrator must launch separate OpenCode jobs itself.
+
+When an OpenCode `build` task determines that 2-4 independent non-interactive branches should run concurrently, it may return this exact marker block instead of executing them sequentially:
+
+```text
+[ORCHESTRATOR_PARALLEL_PLAN]
+{JSON with strategy, merge_task, and tasks[]}
+[/ORCHESTRATOR_PARALLEL_PLAN]
+```
+
+Each `tasks[]` item must include `title`, `route`, and `task`. The orchestrator should launch those OpenCode jobs in parallel and then run one final `build` merge step with the collected results.
 
 ### 2. Direct Commands and Browser Helpers
 
@@ -55,6 +67,12 @@ If a task contains multiple independent workstreams, you may tell OpenCode to us
 - Lightweight page screenshot: `[PW_SCREENSHOT: url]`
 - View top processes: `[CMD: Get-Process | sort CPU -Desc | select -First 5]`
 - Windows GUI automation: `[CMD: powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "Open Notepad and type hello"]`
+- Default local file folder: `C:\Users\ALEXR\OneDrive\Desktop\ReinikeAI Bot\archives`
+
+When the user refers to "the folder" without naming a path, interpret it as the `archives` directory above.
+For transcript lookups, file reads, generated outputs, downloads, and local file searches, start in that `archives` directory unless the user explicitly requests another path.
+Treat `archives` as the preferred default location, not as a hard restriction. If the first check there is insufficient, expand to other relevant paths as needed.
+Files produced by the orchestrator should also go to `archives` unless the user explicitly asks for a different destination.
 
 Use `PW_CONTENT` only when the goal is straightforward text extraction from that page.
 Do not use `PW_CONTENT` to explore a site, discover hidden endpoints, inspect feeds/assets/scripts, resolve uncertain blog locations, or determine the latest item across a site.
@@ -148,6 +166,8 @@ Do not ask OpenCode to run orchestrator-only local skills. Run those directly wi
 
 OpenCode-only skills remain inside the OpenCode environment and must not be listed as orchestrator skills unless the orchestrator can execute them directly from this repository.
 
+If the optional Deep Research pack is installed in OpenCode, prefer its `/research`, `/research-deep`, and `/research-report` workflow for broad market research, literature review, or multi-entity comparison tasks instead of ad-hoc browsing.
+
 Agent guidance inside OpenCode:
 
 - `build`: default route for all delegated tasks
@@ -178,7 +198,7 @@ Skill routing policy:
 
 - If a user sends a PDF, DOCX, or another file, extracted content may already appear in context.
 - If OpenCode needs the original file, use the provided local path from context.
-- The orchestrator automatically sends files whose absolute paths appear in OpenCode results.
+- The orchestrator automatically sends files only when the result clearly presents them as generated/output files or when they were newly created during that job.
 - Do not manually resend files that the orchestrator already detected and sent.
 
 When you need a user decision, prefer Telegram buttons:
@@ -186,12 +206,17 @@ When you need a user decision, prefer Telegram buttons:
 - Format: `[BUTTONS: Question | [{"text":"Option 1","callback_data":"1"},{"text":"Option 2","callback_data":"2"}]]`
 - JSON action format is also valid: `{"type":"BUTTONS","text":"Question","buttons":[{"text":"Option 1","callback_data":"1"}]}`
 - Incoming button click format: `[BUTTON PRESSED: callback_data]`
+- Use buttons aggressively when there are 2-4 obvious next actions and typing would be slower than tapping.
+- This is especially useful after file searches, ambiguous matches, yes/no confirmations, retry choices, and follow-up options like read/open/check/send.
+- Put the most likely or recommended next action first.
 
 File rules:
 
 - Temporary files belong in `$env:TEMP\ReinikeBot`.
 - Any file created by OpenCode must be saved in the repository `archives/` directory.
 - Do not create generated files in the project root.
+- To save tokens, avoid opening or inlining large files, long transcripts, verbose logs, or big text dumps directly in the orchestrator whenever possible.
+- If the file is likely heavy or text-dense, prefer delegating the inspection, extraction, filtering, or summarization to OpenCode instead of reading the whole file locally in the orchestrator.
 
 ## Images and Audio
 
@@ -207,6 +232,8 @@ File rules:
 - If the user explicitly asks to retry, vary the request text slightly.
 - Avoid multiple action commands in one message unless they are strictly complementary.
 - If DuckSearch fails, escalate instead of repeating the same search.
+- When a reply naturally suggests a next step, end by proposing that next action to the user instead of stopping abruptly.
+- Prefer concise endings such as "Do you want me to check it now?" and attach Telegram buttons when appropriate.
 
 ## Personal Data and Forms
 

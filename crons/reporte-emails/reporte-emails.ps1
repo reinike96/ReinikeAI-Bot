@@ -46,7 +46,7 @@ try {
     
     $processInfo = New-Object System.Diagnostics.ProcessStartInfo
     $processInfo.FileName = "powershell.exe"
-    $processInfo.Arguments = "-ExecutionPolicy Bypass -NoProfile -Command `"& '$outlookScript' -DateFilter '$today' -ShowAllAccounts:`$false`""
+    $processInfo.Arguments = "-ExecutionPolicy Bypass -NoProfile -Command `"& '$outlookScript' -DateFilter '$today' -ShowAllAccounts:`$false -Sync -JSON`""
     $processInfo.RedirectStandardOutput = $true
     $processInfo.RedirectStandardError = $true
     $processInfo.UseShellExecute = $false
@@ -61,44 +61,24 @@ try {
     $stderr = $process.StandardError.ReadToEnd()
     $process.WaitForExit()
     
-    $emailsText = $stdout
-    
-    if ($emailsText.Length -lt 100) {
-        Write-Log "DEBUG: stdout muy corto o vacio: '$emailsText'"
+    $emailsText = $stdout.Trim()
+
+    if ([string]::IsNullOrWhiteSpace($emailsText)) {
+        Write-Log "DEBUG: stdout vacio"
         Write-Log "DEBUG: stderr: '$stderr'"
+        throw "El script de Outlook no devolvio JSON."
     }
-    
-    $foundEmails = @()
-    
-    $lines = $emailsText -split "`r?`n"
-    $currentSubject = ""
-    $currentFrom = ""
-    $currentTime = ""
-    
-    foreach ($line in $lines) {
-        if ($line -match "(\d+)\.\s+(.+)") {
-            $currentSubject = $matches[2]
-            $currentSubject = $currentSubject -replace "\s+De:.*$", ""
-            $currentSubject = $currentSubject -replace "\s+Hora:.*$", ""
-            $currentSubject = $currentSubject.Trim()
-        }
-        elseif ($line -match "De:\s+(.+)") {
-            $currentFrom = $matches[1].Trim()
-        }
-        elseif ($line -match "Hora:\s+(.+)") {
-            $currentTime = $matches[1].Trim()
-            if ($currentSubject -ne "") {
-                $foundEmails += [PSCustomObject]@{
-                    Asunto = $currentSubject
-                    De = $currentFrom
-                    Hora = $currentTime
-                }
-                $currentSubject = ""
-                $currentFrom = ""
-                $currentTime = ""
-            }
-        }
+
+    try {
+        $parsed = $emailsText | ConvertFrom-Json -Depth 8
     }
+    catch {
+        Write-Log "DEBUG: stdout invalido: '$emailsText'"
+        Write-Log "DEBUG: stderr: '$stderr'"
+        throw "No se pudo parsear el JSON de Outlook: $($_.Exception.Message)"
+    }
+
+    $foundEmails = @($parsed.Emails)
     
     Write-Log "Parseados $($foundEmails.Count) emails"
     
@@ -120,10 +100,16 @@ try {
         foreach ($email in $foundEmails) {
             $subject = if ($email.Asunto.Length -gt 50) { $email.Asunto.Substring(0, 47) + "..." } else { $email.Asunto }
             $from = if ($email.De.Length -gt 30) { $email.De.Substring(0, 27) + "..." } else { $email.De }
+            $timeText = ""
+            if ($email.FechaIso) {
+                $timeText = ([datetime]$email.FechaIso).ToString("HH:mm")
+            } elseif ($email.Fecha) {
+                $timeText = $email.Fecha
+            }
             
             $reporte += "$counter. *$subject*`n"
             $reporte += "   De: $from`n"
-            $reporte += "   Hora: $($email.Hora)`n`n"
+            $reporte += "   Hora: $timeText`n`n"
             
             $counter++
         }

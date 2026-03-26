@@ -377,6 +377,62 @@ function Save-JsonFile {
     [System.IO.File]::WriteAllText($Path, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
 }
 
+function Install-DeepResearchPack {
+    param(
+        [string]$ProjectRoot,
+        [string]$PythonCommand = ""
+    )
+
+    $vendorRoot = Join-Path $ProjectRoot "vendor\deep-research-skills\opencode"
+    $skillsSource = Join-Path $vendorRoot "skills"
+    $agentsSource = Join-Path $vendorRoot "agents"
+
+    if (-not (Test-Path $skillsSource) -or -not (Test-Path $agentsSource)) {
+        throw "Deep Research vendor files are missing from the repository."
+    }
+
+    $claudeSkillsDir = Join-Path $env:USERPROFILE ".claude\skills"
+    $openCodeAgentsDir = Join-Path $env:USERPROFILE ".config\opencode\agents"
+    $openCodeModulesDir = Join-Path $openCodeAgentsDir "web-search-modules"
+
+    Ensure-Directory -Path $claudeSkillsDir
+    Ensure-Directory -Path $openCodeAgentsDir
+    Ensure-Directory -Path $openCodeModulesDir
+
+    foreach ($skillDirName in @("research", "research-add-items", "research-add-fields", "research-deep", "research-report")) {
+        $source = Join-Path $skillsSource $skillDirName
+        $destination = Join-Path $claudeSkillsDir $skillDirName
+        if (Test-Path $destination) {
+            Remove-Item -Path $destination -Recurse -Force
+        }
+        Copy-Item -Path $source -Destination $destination -Recurse -Force
+    }
+
+    Copy-Item -Path (Join-Path $agentsSource "web-search.md") -Destination (Join-Path $openCodeAgentsDir "web-search.md") -Force
+    Copy-Item -Path (Join-Path $agentsSource "web-search-modules\*") -Destination $openCodeModulesDir -Recurse -Force
+
+    $pipInstalled = $false
+    $resolvedPython = $PythonCommand
+    if ([string]::IsNullOrWhiteSpace($resolvedPython)) {
+        $resolvedPython = Get-PythonCommandName
+    }
+    if (-not [string]::IsNullOrWhiteSpace($resolvedPython)) {
+        try {
+            & $resolvedPython -m pip install pyyaml
+            $pipInstalled = ($LASTEXITCODE -eq 0)
+        }
+        catch {
+            $pipInstalled = $false
+        }
+    }
+
+    return [PSCustomObject]@{
+        Success = $true
+        Message = "Deep Research pack installed into ~/.claude/skills and ~/.config/opencode/agents. Set OPENCODE_ENABLE_EXA=1 before using web search in OpenCode."
+        PyYamlInstalled = $pipInstalled
+    }
+}
+
 function Update-OpenCodeAgentPackToggles {
     param(
         [string]$ConfigPath,
@@ -501,6 +557,16 @@ function Install-CapabilityPack {
                 McpDefinitions = @{
                     playwriter = [pscustomobject]@{ type = "local"; enabled = $true; command = @(Get-NpmCommandPath -CommandName "playwriter") }
                 }
+            }
+        }
+        "research" {
+            $pythonCmd = Get-PythonCommandName
+            $result = Install-DeepResearchPack -ProjectRoot $projectRoot -PythonCommand $pythonCmd
+            return [PSCustomObject]@{
+                Success = $result.Success
+                Message = $result.Message
+                PyYamlInstalled = $result.PyYamlInstalled
+                McpDefinitions = @{}
             }
         }
         default {
@@ -786,6 +852,7 @@ $currentPackDefaults = @{
     sheets = $false
     computer = $false
     social = $false
+    research = $false
 }
 if ($currentSettings.OpenCode -and $currentSettings.OpenCode.Packs) {
     if ($null -ne $currentSettings.OpenCode.Packs.Browser) { $currentPackDefaults.browser = [bool]$currentSettings.OpenCode.Packs.Browser }
@@ -793,6 +860,7 @@ if ($currentSettings.OpenCode -and $currentSettings.OpenCode.Packs) {
     if ($null -ne $currentSettings.OpenCode.Packs.Sheets) { $currentPackDefaults.sheets = [bool]$currentSettings.OpenCode.Packs.Sheets }
     if ($null -ne $currentSettings.OpenCode.Packs.Computer) { $currentPackDefaults.computer = [bool]$currentSettings.OpenCode.Packs.Computer }
     if ($null -ne $currentSettings.OpenCode.Packs.Social) { $currentPackDefaults.social = [bool]$currentSettings.OpenCode.Packs.Social }
+    if ($null -ne $currentSettings.OpenCode.Packs.Research) { $currentPackDefaults.research = [bool]$currentSettings.OpenCode.Packs.Research }
 }
 $packSelections = @{
     browser = Read-BooleanAnswer -Prompt "Enable the browser pack (general browsing and screenshots)?" -Default $currentPackDefaults.browser
@@ -800,6 +868,7 @@ $packSelections = @{
     sheets = Read-BooleanAnswer -Prompt "Enable the sheets pack (Excel and CSV workflows)?" -Default $currentPackDefaults.sheets
     computer = Read-BooleanAnswer -Prompt "Enable the computer pack (mouse, keyboard, desktop control)?" -Default $currentPackDefaults.computer
     social = Read-BooleanAnswer -Prompt "Enable the social pack (LinkedIn and X style workflows)?" -Default $currentPackDefaults.social
+    research = Read-BooleanAnswer -Prompt "Enable the Deep Research pack (structured research workflows for OpenCode)?" -Default $currentPackDefaults.research
 }
 $packInstallResults = @{}
 foreach ($packName in $packSelections.Keys) {
@@ -900,6 +969,7 @@ $settingsObject = [ordered]@{
             sheets = [bool]$packSelections.sheets
             computer = [bool]$packSelections.computer
             social = [bool]$packSelections.social
+            research = [bool]$packSelections.research
         }
     }
     browser = [ordered]@{
@@ -974,6 +1044,10 @@ Write-Host "- Wrote config/settings.json with your local values."
 Write-Host "- Updated PERSONAL DATA.local.md with your local information."
 Write-Host "- Copied the OpenCode user config template."
 Write-Host "- Applied OpenCode capability pack toggles for the selected agents."
+if ([bool]$packSelections.research) {
+    Write-Host "- Installed the Deep Research pack into the local OpenCode skill and agent paths."
+    Write-Host "- Remember to set OPENCODE_ENABLE_EXA=1 in the shell that runs OpenCode." -ForegroundColor Yellow
+}
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Green
 Write-Host "1. Start the bot with .\RunBot.bat"

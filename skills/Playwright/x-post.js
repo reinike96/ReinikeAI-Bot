@@ -673,9 +673,26 @@ console.log('[DRAFT_READY]');
 console.log('Site: X.com');
 console.log(`Screenshot: ${outputScreenshot}`);
 // Attempt to post the tweet automatically
+// First, remove any overlay elements that might block the click
+await page.evaluate(() => {
+    const layers = document.getElementById('layers');
+    if (layers) {
+        while (layers.firstChild) {
+            layers.removeChild(layers.firstChild);
+        }
+    }
+    // Also remove any fixed overlay divs
+    document.querySelectorAll('[role="presentation"]').forEach(el => {
+        if (el.style.position === 'fixed' || getComputedStyle(el).position === 'fixed') {
+            el.remove();
+        }
+    });
+}).catch(() => {});
+await sleep(500);
+
 const postBtn = page.locator('button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]').first();
 if (await postBtn.count() > 0 && await postBtn.isVisible({ timeout: 2000 })) {
-    await postBtn.click({ timeout: 5000 });
+    await postBtn.click({ timeout: 5000, force: true });
     await sleep(3000);
     console.log('[POSTED]');
 } else {

@@ -186,6 +186,7 @@ function Set-TelegramCommands {
         @{ command = "stopcmd"; description = "Stop running local desktop commands" },
         @{ command = "stopall"; description = "Stop all local automation and OpenCode" },
         @{ command = "stopopencode"; description = "Stop the OpenCode server and jobs" },
+        @{ command = "opencodemodel"; description = "Show or change OpenCode model" },
         @{ command = "restart"; description = "Restart the bot" },
         @{ command = "thinking"; description = "Change reasoning level (example: /thinking high)" }
     )

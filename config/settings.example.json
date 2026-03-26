@@ -24,13 +24,14 @@
     "command": "opencode",
     "configPath": "C:\\Users\\<YourUser>\\.config\\opencode\\opencode.json",
     "transport": "cli",
-    "defaultModel": "opencode/kimi-k2.5",
+    "defaultModel": "opencode/mimo-v2-pro-free",
     "packs": {
       "browser": true,
       "docs": false,
       "sheets": false,
       "computer": false,
-      "social": false
+      "social": false,
+      "research": false
     }
   },
   "browser": {

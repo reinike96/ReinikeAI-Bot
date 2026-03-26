@@ -104,23 +104,35 @@ function Initialize-OpenCodeSessionDiagnostics {
     $archivesDir = if ($BotConfig -and $BotConfig.Paths -and $BotConfig.Paths.ArchivesDir) { $BotConfig.Paths.ArchivesDir } else { Join-Path $PWD "archives" }
     New-Item -ItemType Directory -Force -Path $archivesDir | Out-Null
 
-    $diagnosticPath = Join-Path $archivesDir "opencode-session-diagnostics.md"
+    $diagnosticsDir = Join-Path $archivesDir "session-diagnostics"
+    New-Item -ItemType Directory -Force -Path $diagnosticsDir | Out-Null
+
     $startedAt = (Get-Date).ToString("o")
-    $safeChatId = if ([string]::IsNullOrWhiteSpace($ChatId)) { "(none)" } else { $ChatId }
+    $safeChatId = if ([string]::IsNullOrWhiteSpace($ChatId)) { "none" } else { ($ChatId -replace '[^a-zA-Z0-9_-]', '_') }
     $safeTask = if ([string]::IsNullOrWhiteSpace($TaskText)) { "(empty task)" } else { $TaskText.Trim() }
+    $fingerprint = Get-TaskCheckpointFingerprint -TaskText $TaskText
+    $shortFingerprint = if ([string]::IsNullOrWhiteSpace($fingerprint)) { [Guid]::NewGuid().ToString("N").Substring(0, 12) } else { $fingerprint.Substring(0, [Math]::Min(12, $fingerprint.Length)) }
+    $timestampLabel = Get-Date -Format "yyyyMMdd_HHmmss"
+    $diagnosticPath = Join-Path $diagnosticsDir ("opencode-{0}-{1}-{2}.md" -f $timestampLabel, $safeChatId, $shortFingerprint)
 
     $initialContent = @"
 # OpenCode Session Diagnostics
+
+## Session
 
 - startedAt: $startedAt
 - chatId: $safeChatId
 - task: $safeTask
 
+## Progress Log
+
+(append short bullet lines here while the task is running)
+
 ## Notes
 
-- This file is overwritten at the start of each OpenCode session.
-- OpenCode should append errors, retries, blockers, and fallback decisions here while it works.
-- The orchestrator may append session metadata and raw event snapshots for debugging.
+- This file is per session and should not be overwritten by another job.
+- OpenCode should append short bullet lines to Progress Log for milestones, blockers, retries, and strategy changes.
+- The orchestrator may append session metadata, warnings, usage, and raw event snapshots in separate sections.
 "@.Trim() + "`n"
 
     Set-Content -Path $diagnosticPath -Value $initialContent -Encoding UTF8
@@ -393,8 +405,13 @@ function Get-CheckpointStateForPrompt {
     if ($CheckpointData.extractedFacts -and $CheckpointData.extractedFacts.Count -gt 0) {
         $lines += "Extracted facts: " + (($CheckpointData.extractedFacts | Select-Object -First 6) -join "; ")
     }
+    $notes = @(Convert-ToCheckpointStringArray -Value $CheckpointData.notes)
+    if ($notes.Count -gt 0) {
+        $lines += "Notes: " + (($notes | Select-Object -Last 4) -join "; ")
+    }
     if ($CheckpointData.lastResultPreview) { $lines += "Last result preview: $($CheckpointData.lastResultPreview)" }
     if ($CheckpointData.lastError) { $lines += "Last error: $($CheckpointData.lastError)" }
+    if ($CheckpointData.updatedAt) { $lines += "Updated at: $($CheckpointData.updatedAt)" }
 
     return (($lines -join "`n").Trim())
 }
@@ -918,6 +935,51 @@ function Convert-OpenRouterContentToText {
     }
 }
 
+function New-OpenCodeRuntimeTaskPrompt {
+    param(
+        [string]$TaskDescription,
+        [string]$WorkDir,
+        [string]$OutputDir,
+        [string]$CheckpointPath,
+        [string]$CheckpointPrompt,
+        [string]$SessionDiagnosticsPath,
+        [bool]$AllowParallelPlan = $true
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("Working directory: $WorkDir") | Out-Null
+    $lines.Add("Output directory: $OutputDir") | Out-Null
+    $lines.Add("Checkpoint file: $CheckpointPath") | Out-Null
+    if (-not [string]::IsNullOrWhiteSpace($SessionDiagnosticsPath)) {
+        $lines.Add("Session diagnostics file: $SessionDiagnosticsPath") | Out-Null
+    }
+    $lines.Add("Checkpoint rule: resume from it when present, do not repeat completed steps, and update it after durable milestones with status, completedSteps, pendingSteps, discoveredUrls, discoveredFiles, extractedFacts, notes, lastAction, and lastError.") | Out-Null
+    $lines.Add("Visibility rule: keep the checkpoint and diagnostics files current enough that the orchestrator can explain your progress every few minutes.") | Out-Null
+    $lines.Add("Progress rule: before major work and after each durable milestone, update the checkpoint file in place. Keep status, completedSteps, pendingSteps, notes, lastAction, and lastError current. If blocked, state exactly what blocked you.") | Out-Null
+    if (-not [string]::IsNullOrWhiteSpace($SessionDiagnosticsPath)) {
+        $lines.Add("Diagnostics rule: append short bullet lines to the Progress Log in the diagnostics file whenever you hit a blocker, retry a failed path, change strategy, or complete a milestone. Be concrete, not generic.") | Out-Null
+    }
+    $lines.Add("Loop guard: if the same command, tool, or strategy fails twice, do not keep retrying that path. Either switch to a materially different approach once, or stop with [CANNOT_COMPLETE: concise reason].") | Out-Null
+    if ($AllowParallelPlan) {
+        $lines.Add("Parallel rule: if the task clearly splits into 2-4 independent non-interactive branches that should run concurrently, do not simulate parallelism yourself. Return exactly [ORCHESTRATOR_PARALLEL_PLAN] JSON [/ORCHESTRATOR_PARALLEL_PLAN] with fields strategy, merge_task, and tasks[]. Each task needs title, route, and task. Use only routes build, browser, docs, sheets, computer, or social.") | Out-Null
+    }
+    else {
+        $lines.Add("Parallel rule: do not return ORCHESTRATOR_PARALLEL_PLAN for this task. Complete it directly.") | Out-Null
+    }
+    $lines.Add("") | Out-Null
+    $taskText = if ($null -eq $TaskDescription) { "" } else { "$TaskDescription" }
+    $lines.Add("Task:") | Out-Null
+    $lines.Add($taskText.Trim()) | Out-Null
+
+    if (-not [string]::IsNullOrWhiteSpace($CheckpointPrompt)) {
+        $lines.Add("") | Out-Null
+        $lines.Add("Current checkpoint state:") | Out-Null
+        $lines.Add($CheckpointPrompt.Trim()) | Out-Null
+    }
+
+    return (($lines | Where-Object { $null -ne $_ }) -join "`n").Trim()
+}
+
 function Start-OpenCodeJob {
     param(
         [string]$TaskDescription,
@@ -925,7 +987,8 @@ function Start-OpenCodeJob {
         [string[]]$EnableMCPs = @(),
         [string]$Model = "",
         [string]$Agent = $null,
-        [int]$TimeoutSec = 1200
+        [int]$TimeoutSec = 1200,
+        [bool]$AllowParallelPlan = $true
     )
     $requestedModel = $Model
     if ([string]::IsNullOrWhiteSpace($Model)) {
@@ -939,13 +1002,14 @@ function Start-OpenCodeJob {
     $sessionDiagnosticsPath = Initialize-OpenCodeSessionDiagnostics -BotConfig $botConfig -ChatId $ChatId -TaskText $TaskDescription
     Update-TaskCheckpointState -CheckpointPath $checkpointInfo.Path -TaskText $TaskDescription -Status "running" -LastAction "Task delegated to OpenCode"
     $checkpointPrompt = Get-CheckpointStateForPrompt -CheckpointData $checkpointInfo.Data
+    $runtimeTaskPrompt = New-OpenCodeRuntimeTaskPrompt -TaskDescription $TaskDescription -WorkDir $workDir -OutputDir $archivesDir -CheckpointPath $checkpointInfo.Path -CheckpointPrompt $checkpointPrompt -SessionDiagnosticsPath $sessionDiagnosticsPath -AllowParallelPlan:$AllowParallelPlan
 
     if ($transport -ne "http") {
         $heartbeatId = [Guid]::NewGuid().ToString("N")
         $heartbeatPath = Join-Path $workDir "heartbeat_$heartbeatId.json"
         $cliModel = if ([string]::IsNullOrWhiteSpace($requestedModel)) { "" } else { $requestedModel.Trim() }
         $jobScript = {
-            param($taskDescription, $workDir, $archivesDir, $heartbeatPath, $enableMCPs, $modelStr, $agentStr, $timeoutSeconds, $openCodeCommand, $openCodeApiKey, $checkpointPath, $checkpointPrompt, $sessionDiagnosticsPath)
+            param($taskDescription, $runtimeTaskPrompt, $workDir, $archivesDir, $heartbeatPath, $enableMCPs, $modelStr, $agentStr, $timeoutSeconds, $openCodeCommand, $openCodeApiKey, $checkpointPath, $checkpointPrompt, $sessionDiagnosticsPath)
             Add-Type -AssemblyName System.Net.Http
             function Write-DailyLog {
                 param([string]$message, [string]$type = "INFO")
@@ -1065,24 +1129,7 @@ function Start-OpenCodeJob {
                 ) -join "`n"
             }
 
-            $taskText = @"
-Working directory: $workDir
-Output directory for created files: $archivesDir
-Task: $taskDescription
-
-Save created files in $archivesDir, not in the project root.
-
-CHECKPOINT FILE:
-$checkpointPath
-
-CHECKPOINT RULES:
-- Read the checkpoint first and resume from it.
-- Do not repeat completed steps unless recovery requires it.
-- After each durable milestone, update the checkpoint JSON with status, completedSteps, pendingSteps, discoveredUrls, discoveredFiles, extractedFacts, lastAction, and lastError if any.
-
-CURRENT CHECKPOINT STATE:
-$checkpointPrompt
-"@.Trim()
+            $taskText = $runtimeTaskPrompt
 
             try {
                 Set-Location -Path $workDir
@@ -1107,6 +1154,9 @@ $checkpointPrompt
                 $opencodeArgs = @("run", $taskText)
                 if (-not [string]::IsNullOrWhiteSpace($modelStr)) {
                     $opencodeArgs += @("--model", $modelStr)
+                }
+                if (-not [string]::IsNullOrWhiteSpace($agentStr)) {
+                    $opencodeArgs += @("--agent", $agentStr)
                 }
 
                 $innerJob = Start-Job -ScriptBlock {
@@ -1201,7 +1251,7 @@ $checkpointPrompt
             }
         }
 
-        $job = Start-Job -ScriptBlock $jobScript -ArgumentList $TaskDescription, $workDir, $archivesDir, $heartbeatPath, $EnableMCPs, $cliModel, $Agent, $TimeoutSec, $botConfig.OpenCode.Command, $botConfig.OpenCode.ApiKey, $checkpointInfo.Path, $checkpointPrompt, $sessionDiagnosticsPath
+        $job = Start-Job -ScriptBlock $jobScript -ArgumentList $TaskDescription, $runtimeTaskPrompt, $workDir, $archivesDir, $heartbeatPath, $EnableMCPs, $cliModel, $Agent, $TimeoutSec, $botConfig.OpenCode.Command, $botConfig.OpenCode.ApiKey, $checkpointInfo.Path, $checkpointPrompt, $sessionDiagnosticsPath
         $labelSuffix = if ($EnableMCPs.Count -gt 0) { " (MCP: $($EnableMCPs -join ','))" } else { "" }
         if ($Agent) { $labelSuffix += " [Agent hint: $Agent]" }
         return @{
@@ -1221,12 +1271,15 @@ $checkpointPrompt
             CheckpointReason = $checkpointInfo.Reason
             SessionDiagnosticsPath = $sessionDiagnosticsPath
             HeartbeatPath = $heartbeatPath
+            RequestedAgent = $Agent
+            RequestedModel = $requestedModel
+            AllowParallelPlan = $AllowParallelPlan
         }
     }
 
     [void](Start-OpenCodeServerIfNeeded -BotConfig $botConfig)
     $jobScript = {
-        param($taskDescription, $workDir, $archivesDir, $jobId, $enableMCPs, $modelStr, $agentStr, $timeoutSeconds, $openCodeHost, $openCodePort, $openCodePassword, $checkpointPath, $checkpointPrompt, $sessionDiagnosticsPath)
+        param($taskDescription, $runtimeTaskPrompt, $workDir, $archivesDir, $jobId, $enableMCPs, $modelStr, $agentStr, $timeoutSeconds, $openCodeHost, $openCodePort, $openCodePassword, $checkpointPath, $checkpointPrompt, $sessionDiagnosticsPath)
         Add-Type -AssemblyName System.Net.Http
         function Write-DailyLog {
             param([string]$message, [string]$type = "INFO")
@@ -1338,26 +1391,7 @@ $checkpointPrompt
             Append-SessionDiagnostics -Title "Session Metadata" -Body $sessionMetadata
             Write-Heartbeat -jobId $jobId -status "session_ready"
 
-            $taskText = @"
-Working directory: $workDir
-Output directory for created files: $archivesDir
-Task: $taskDescription
-
-IMPORTANT: Any file you create must be saved in the output directory ($archivesDir). Do not create generated files in the project root ($workDir).
-
-CHECKPOINT FILE:
-$checkpointPath
-
-CHECKPOINT RULES:
-1. Read the checkpoint file first if it exists and continue from the saved state.
-2. Do not repeat steps already marked as completed unless a real recovery step requires it.
-3. After every durable milestone, update the checkpoint JSON with: status, completedSteps, pendingSteps, discoveredUrls, discoveredFiles, extractedFacts, lastAction, and lastError if any.
-4. If you already reached a page, extracted links, opened a document, or produced partial output, write that state to the checkpoint before moving on.
-5. If the task is retried later, use the checkpoint to resume directly instead of starting from scratch.
-
-CURRENT CHECKPOINT STATE:
-$checkpointPrompt
-"@.Trim()
+            $taskText = $runtimeTaskPrompt
 
             $msgHash = @{
                 parts = @(@{ type = "text"; text = $taskText })
@@ -1464,7 +1498,7 @@ $checkpointPrompt
     }
 
     $jobId = [Guid]::NewGuid().ToString()
-    $job = Start-Job -ScriptBlock $jobScript -ArgumentList $TaskDescription, $workDir, $archivesDir, $jobId, $EnableMCPs, $Model, $Agent, $TimeoutSec, $botConfig.OpenCode.Host, $botConfig.OpenCode.Port, $botConfig.OpenCode.ServerPassword, $checkpointInfo.Path, $checkpointPrompt, $sessionDiagnosticsPath
+    $job = Start-Job -ScriptBlock $jobScript -ArgumentList $TaskDescription, $runtimeTaskPrompt, $workDir, $archivesDir, $jobId, $EnableMCPs, $Model, $Agent, $TimeoutSec, $botConfig.OpenCode.Host, $botConfig.OpenCode.Port, $botConfig.OpenCode.ServerPassword, $checkpointInfo.Path, $checkpointPrompt, $sessionDiagnosticsPath
     $labelSuffix = if ($EnableMCPs.Count -gt 0) { " (MCP: $($EnableMCPs -join ','))" } else { "" }
     if ($Agent) { $labelSuffix += " [Agent: $Agent]" }
     return @{
@@ -1483,5 +1517,8 @@ $checkpointPrompt
         CheckpointPath = $checkpointInfo.Path
         CheckpointReason = $checkpointInfo.Reason
         SessionDiagnosticsPath = $sessionDiagnosticsPath
+        RequestedAgent = $Agent
+        RequestedModel = $requestedModel
+        AllowParallelPlan = $AllowParallelPlan
     }
 }

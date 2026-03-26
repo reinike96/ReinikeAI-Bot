@@ -133,6 +133,46 @@ function Update-ConversationTurnState {
     return $TurnState
 }
 
+function Get-UserVisibleResponseText {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ""
+    }
+
+    $normalized = "$Text".Replace("`r", "")
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($normalized -split "`n")) {
+        $lines.Add($line) | Out-Null
+    }
+
+    while ($lines.Count -gt 0) {
+        $trimmed = $lines[0].Trim()
+        if ($trimmed -match '^(CMD|OPENCODE|PW_CONTENT|PW_SCREENSHOT|SCREENSHOT|STATUS)\s*:') {
+            $lines.RemoveAt(0)
+            continue
+        }
+        break
+    }
+
+    while ($lines.Count -gt 0) {
+        $trimmed = $lines[$lines.Count - 1].Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmed)) {
+            $lines.RemoveAt($lines.Count - 1)
+            continue
+        }
+        if ($trimmed -match '^[\]\}\s,]+$') {
+            $lines.RemoveAt($lines.Count - 1)
+            continue
+        }
+        break
+    }
+
+    $result = ($lines -join "`n").Trim()
+    $result = [regex]::Replace($result, '(?s)(?:\r?\n){3,}', "`n`n")
+    return $result
+}
+
 function Finalize-ConversationTurn {
     param(
         [string]$ChatId,
@@ -142,7 +182,7 @@ function Finalize-ConversationTurn {
         [bool]$RequiresLoop
     )
 
-    $respText = $TurnState.ResponseText.Trim()
+    $respText = Get-UserVisibleResponseText -Text $TurnState.ResponseText
 
     if ($TurnState.BlockedTags.Count -gt 0) {
         $responseToSave = $AiResponse.Trim()

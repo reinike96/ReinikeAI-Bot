@@ -66,6 +66,7 @@ The repository now ships project-defined OpenCode agent profiles so users can ke
 - `sheets`: Excel and CSV workflows
 - `computer`: mouse, keyboard, and desktop control
 - `social`: hardened social-site browsing flows such as LinkedIn or X
+- `research`: structured multi-step research workflows inside OpenCode
 
 Reference:
 
@@ -78,6 +79,12 @@ The interactive installer lets users turn these capability packs on or off and w
 - `~/.config/opencode/config.json`
 
 For optional third-party packs, the installer can also ask whether each selected pack should be installed immediately and then inject the corresponding MCP server definitions into the user's OpenCode config.
+
+An optional Deep Research pack is also available for OpenCode. It is versioned in this repository and, when selected in `Install.ps1`, is copied into the real OpenCode runtime paths:
+
+- `~/.claude/skills/research*`
+- `~/.config/opencode/agents/web-search.md`
+- `~/.config/opencode/agents/web-search-modules/`
 
 ## Quick Start
 
@@ -131,6 +138,8 @@ Examples:
 - Windows-Use desktop automation
 
 OpenCode-side skills are separate from the local orchestrator registry and should only be treated as local skills if the orchestrator can execute them directly from this repository.
+
+The Deep Research pack follows that rule: the repository stores the source pack, but the actual runnable installation lives in the user's OpenCode paths after setup.
 
 This separation is intentional: orchestrator skills are local repo tools, while OpenCode skills belong to the OpenCode execution environment.
 

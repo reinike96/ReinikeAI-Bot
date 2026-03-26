@@ -39,28 +39,42 @@ function Get-OpenCodeTaskFromActionPayload {
     return ""
 }
 
-function Convert-StructuredResponseToActions {
-    param([string]$Response)
+function Get-ActionPayloadList {
+    param([object]$Actions)
 
-    $payloadText = Get-StructuredPayloadText -Response $Response
-    if ([string]::IsNullOrWhiteSpace($payloadText)) {
+    if ($null -eq $Actions) {
+        return @()
+    }
+
+    if ($Actions -is [string]) {
+        return @($Actions)
+    }
+
+    if ($Actions -is [System.Collections.IEnumerable] -and $Actions -isnot [pscustomobject] -and $Actions -isnot [hashtable]) {
+        return @($Actions)
+    }
+
+    return @($Actions)
+}
+
+function Convert-StructuredPayloadObjectToItems {
+    param(
+        [object]$Payload,
+        [string]$Raw
+    )
+
+    if ($null -eq $Payload) {
         return $null
     }
 
-    try {
-        $payload = $payloadText | ConvertFrom-Json -ErrorAction Stop
-    }
-    catch {
-        return $null
-    }
-
-    if ($null -eq $payload) {
+    $hasReply = $Payload.PSObject.Properties["reply"] -or $Payload.PSObject.Properties["actions"]
+    if (-not $hasReply) {
         return $null
     }
 
     $items = @()
 
-    $reply = if ($payload.PSObject.Properties["reply"]) { "$($payload.reply)" } else { "" }
+    $reply = if ($Payload.PSObject.Properties["reply"]) { "$($Payload.reply)" } else { "" }
     if (-not [string]::IsNullOrWhiteSpace($reply)) {
         $items += [PSCustomObject]@{
             Kind    = "text"
@@ -68,7 +82,7 @@ function Convert-StructuredResponseToActions {
         }
     }
 
-    $actions = if ($payload.PSObject.Properties["actions"]) { @($payload.actions) } else { @() }
+    $actions = if ($Payload.PSObject.Properties["actions"]) { Get-ActionPayloadList -Actions $Payload.actions } else { @() }
     foreach ($action in $actions) {
         if ($null -eq $action) { continue }
         $actionType = if ($action.PSObject.Properties["type"]) { "$($action.type)".ToUpperInvariant() } else { "" }
@@ -77,7 +91,7 @@ function Convert-StructuredResponseToActions {
         $item = [ordered]@{
             Kind       = "action"
             ActionType = $actionType
-            Raw        = $payloadText
+            Raw        = $Raw
         }
 
         switch ($actionType) {
@@ -101,6 +115,24 @@ function Convert-StructuredResponseToActions {
     }
 
     return $items
+}
+
+function Convert-StructuredResponseToActions {
+    param([string]$Response)
+
+    $payloadText = Get-StructuredPayloadText -Response $Response
+    if ([string]::IsNullOrWhiteSpace($payloadText)) {
+        return $null
+    }
+
+    try {
+        $payload = $payloadText | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+
+    return Convert-StructuredPayloadObjectToItems -Payload $payload -Raw $payloadText
 }
 
 function Convert-InlineStructuredActions {
@@ -146,7 +178,11 @@ function Convert-InlineStructuredActions {
 
             if ($depth -eq 0) {
                 $candidateText = $Response.Substring($start, $index - $start + 1)
-                if ($candidateText -match '(?is)"type"\s*:\s*"(BUTTONS|CMD|OPENCODE|PW_CONTENT|PW_SCREENSHOT|SCREENSHOT|STATUS)"') {
+                if (
+                    $candidateText -match '(?is)"type"\s*:\s*"(BUTTONS|CMD|OPENCODE|PW_CONTENT|PW_SCREENSHOT|SCREENSHOT|STATUS)"' -or
+                    $candidateText -match '(?is)"reply"\s*:' -or
+                    $candidateText -match '(?is)"actions"\s*:'
+                ) {
                     $candidateMatches += [PSCustomObject]@{
                         Index  = $start
                         Length = ($index - $start + 1)
@@ -175,33 +211,39 @@ function Convert-InlineStructuredActions {
         }
 
         try {
-            $action = $match.Value | ConvertFrom-Json -ErrorAction Stop
-            $actionType = if ($action.PSObject.Properties["type"]) { "$($action.type)".ToUpperInvariant() } else { "" }
-            if (-not [string]::IsNullOrWhiteSpace($actionType)) {
-                $item = [ordered]@{
-                    Kind       = "action"
-                    ActionType = $actionType
-                    Raw        = $match.Value
-                }
-
-                switch ($actionType) {
-                    "CMD" { $item["Command"] = "$($action.command)" }
-                    "OPENCODE" {
-                        $item["Route"] = if ($action.PSObject.Properties["route"]) { "$($action.route)" } else { "chat" }
-                        $item["Task"] = Get-OpenCodeTaskFromActionPayload -Action $action
+            $candidatePayload = $match.Value | ConvertFrom-Json -ErrorAction Stop
+            $structuredItems = Convert-StructuredPayloadObjectToItems -Payload $candidatePayload -Raw $match.Value
+            if ($null -ne $structuredItems) {
+                $items += @($structuredItems)
+            }
+            else {
+                $actionType = if ($candidatePayload.PSObject.Properties["type"]) { "$($candidatePayload.type)".ToUpperInvariant() } else { "" }
+                if (-not [string]::IsNullOrWhiteSpace($actionType)) {
+                    $item = [ordered]@{
+                        Kind       = "action"
+                        ActionType = $actionType
+                        Raw        = $match.Value
                     }
-                    "PW_CONTENT" { $item["Url"] = "$($action.url)" }
-                    "PW_SCREENSHOT" { $item["Url"] = "$($action.url)" }
-                    "BUTTONS" {
-                        $item["Text"] = "$($action.text)"
-                        $item["Buttons"] = @($action.buttons)
-                    }
-                    "STATUS" { }
-                    "SCREENSHOT" { }
-                    default { }
-                }
 
-                $items += [PSCustomObject]$item
+                    switch ($actionType) {
+                        "CMD" { $item["Command"] = "$($candidatePayload.command)" }
+                        "OPENCODE" {
+                            $item["Route"] = if ($candidatePayload.PSObject.Properties["route"]) { "$($candidatePayload.route)" } else { "chat" }
+                            $item["Task"] = Get-OpenCodeTaskFromActionPayload -Action $candidatePayload
+                        }
+                        "PW_CONTENT" { $item["Url"] = "$($candidatePayload.url)" }
+                        "PW_SCREENSHOT" { $item["Url"] = "$($candidatePayload.url)" }
+                        "BUTTONS" {
+                            $item["Text"] = "$($candidatePayload.text)"
+                            $item["Buttons"] = @($candidatePayload.buttons)
+                        }
+                        "STATUS" { }
+                        "SCREENSHOT" { }
+                        default { }
+                    }
+
+                    $items += [PSCustomObject]$item
+                }
             }
         }
         catch {

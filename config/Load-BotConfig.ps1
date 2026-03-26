@@ -129,7 +129,7 @@ function Import-BotSettings {
             Command        = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_COMMAND" -JsonPath "opencode.command" -DefaultValue "opencode"
             ConfigPath     = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_CONFIG_PATH" -JsonPath "opencode.configPath" -DefaultValue (Join-Path $env:USERPROFILE ".config\opencode\opencode.json")
             Transport      = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_TRANSPORT" -JsonPath "opencode.transport" -DefaultValue "cli"
-            DefaultModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_DEFAULT_MODEL" -JsonPath "opencode.defaultModel" -DefaultValue "opencode/kimi-k2.5"
+            DefaultModel   = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "OPENCODE_DEFAULT_MODEL" -JsonPath "opencode.defaultModel" -DefaultValue "opencode/mimo-v2-pro-free"
             Packs          = [PSCustomObject]@{
                 Browser = $browserPackEnabled
                 Docs = $docsPackEnabled
@@ -213,6 +213,76 @@ function Set-PersistentReasoningEffort {
     }
     else {
         $jsonConfig.llm | Add-Member -NotePropertyName "reasoningEffort" -NotePropertyValue $normalizedValue
+    }
+
+    $jsonConfig | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding UTF8
+    return $normalizedValue
+}
+
+function Normalize-OpenCodeModelValue {
+    param(
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "OpenCode model value cannot be empty."
+    }
+
+    $normalizedValue = $Value.Trim()
+    if ($normalizedValue -match '\s') {
+        throw "OpenCode model cannot contain spaces. Use values like 'mimo-v2-pro-free' or 'opencode/kimi-k2.5'."
+    }
+
+    if ($normalizedValue -notmatch '^[A-Za-z0-9._/-]+$') {
+        throw "Unsupported OpenCode model format: $Value"
+    }
+
+    if ($normalizedValue -notmatch '/') {
+        $normalizedValue = "opencode/$normalizedValue"
+    }
+
+    return $normalizedValue.ToLowerInvariant()
+}
+
+function Set-PersistentOpenCodeDefaultModel {
+    param(
+        [string]$ProjectRoot,
+        [string]$Value
+    )
+
+    $normalizedValue = Normalize-OpenCodeModelValue -Value $Value
+
+    $root = Get-BotProjectRoot -ProjectRoot $ProjectRoot
+    $settingsPath = Join-Path $root "config\settings.json"
+    $settingsExamplePath = Join-Path $root "config\settings.example.json"
+
+    $jsonConfig = $null
+    if (Test-Path $settingsPath) {
+        $raw = Get-Content $settingsPath -Raw -ErrorAction Stop
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            $jsonConfig = $raw | ConvertFrom-Json -ErrorAction Stop
+        }
+    }
+    elseif (Test-Path $settingsExamplePath) {
+        $raw = Get-Content $settingsExamplePath -Raw -ErrorAction Stop
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            $jsonConfig = $raw | ConvertFrom-Json -ErrorAction Stop
+        }
+    }
+
+    if ($null -eq $jsonConfig) {
+        $jsonConfig = [pscustomobject]@{}
+    }
+
+    if (-not $jsonConfig.PSObject.Properties["opencode"] -or $null -eq $jsonConfig.opencode) {
+        $jsonConfig | Add-Member -NotePropertyName "opencode" -NotePropertyValue ([pscustomobject]@{})
+    }
+
+    if ($jsonConfig.opencode.PSObject.Properties["defaultModel"]) {
+        $jsonConfig.opencode.defaultModel = $normalizedValue
+    }
+    else {
+        $jsonConfig.opencode | Add-Member -NotePropertyName "defaultModel" -NotePropertyValue $normalizedValue
     }
 
     $jsonConfig | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding UTF8

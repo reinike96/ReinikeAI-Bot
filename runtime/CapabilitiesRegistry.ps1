@@ -10,52 +10,20 @@ function Get-OpenCodeTaskEnvelope {
         return ""
     }
 
-    $skillPrefix = Get-OpenCodeSkillPrefix -Task $normalizedTask -PreferredAgent $PreferredAgent
-$baseText = @"
-$skillPrefix
-Verify success from observed state, not attempted action.
-Use `web-inspect` first for public-site discovery or latest-item tasks.
-Prefer not to pull large JS/JSON/RSS/XML assets into model context when the same result can be obtained by local filtering or targeted extraction. Save tokens when possible.
-For short social posts, stop at the minimum source package: title, final URL, date, and 1-3 key points.
-Use `playwright` only when rendered DOM behavior or interaction is truly required.
-
-Task:
-$normalizedTask
-"@.Trim()
+    $lines = New-Object System.Collections.Generic.List[string]
+    $routeAgent = if ([string]::IsNullOrWhiteSpace($PreferredAgent)) { "build" } else { $PreferredAgent.Trim().ToLowerInvariant() }
+    $lines.Add("Route: $routeAgent.") | Out-Null
+    $lines.Add("") | Out-Null
+    $lines.Add("Task:") | Out-Null
+    $lines.Add($normalizedTask) | Out-Null
 
     if (-not [string]::IsNullOrWhiteSpace($ExtraInstructions)) {
-        return ($baseText + "`n`nExecution notes:`n$ExtraInstructions").Trim()
+        $lines.Add("") | Out-Null
+        $lines.Add("Constraints:") | Out-Null
+        $lines.Add($ExtraInstructions.Trim()) | Out-Null
     }
 
-    return $baseText
-}
-
-function Get-OpenCodeSkillPrefix {
-    param(
-        [string]$Task,
-        [string]$PreferredAgent = ""
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Task)) {
-        return ""
-    }
-
-    $normalizedTask = $Task.ToLowerInvariant()
-    $agentHint = if ([string]::IsNullOrWhiteSpace($PreferredAgent)) { "" } else { $PreferredAgent.Trim().ToLowerInvariant() }
-
-    $mentionsSite = $normalizedTask -match 'https?://|www\.|(?:\b[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s]*)?|\bsite\b|\bwebsite\b|\bweb\b|\bsitio\b|\bp[aá]gina\b'
-    $mentionsDiscovery = $normalizedTask -match 'latest|newest|most recent|ultimo|último|penultimate|penultimo|penúltimo|find|encuentra|busca|discover|inspect|inspecciona|extract|extrae|url|blog|article|articulo|artículo|news|post'
-    $mentionsInteraction = $normalizedTask -match 'publish|publica|publicar|tweet|twitter|x\.com|linkedin|login|log in|sign in|draft|borrador|click|haz clic|type|typing|paste|pega|reply|comment|composer|editor'
-
-    if ($mentionsSite -and $mentionsDiscovery) {
-        return "/web-inspect"
-    }
-
-    if ($agentHint -eq "social" -or ($mentionsSite -and $mentionsInteraction)) {
-        return "/playwright"
-    }
-
-    return ""
+    return (($lines | Where-Object { $null -ne $_ }) -join "`n").Trim()
 }
 
 function Get-GoogleScreenshotQueryFromTask {
@@ -213,6 +181,23 @@ function Test-TaskRequestsFinalPublish {
     return ($mentionsPublish -and -not $mentionsNoPublish)
 }
 
+function Test-ShouldPreferSocialSpecialist {
+    param(
+        [string]$Task
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Task)) {
+        return $false
+    }
+
+    $normalizedTask = $Task.ToLowerInvariant()
+    $mentionsLinkedIn = $normalizedTask -match 'linkedin'
+    $mentionsX = $normalizedTask -match 'x\.com|twitter|\btweet\b|\bthread\b|(?:\bpost\b|\bpublicaci[oó]n\b|\bdraft\b|\bborrador\b).{0,20}\bx\b|\bx\b.{0,20}(?:\bpost\b|\bpublicaci[oó]n\b|\bdraft\b|\bborrador\b)'
+    $mentionsAction = $normalizedTask -match 'post|publica|publicar|draft|borrador|reply|comment|comentar|editor|composer|login|log in|sign in|iniciar sesi|publish|publicaci[oó]n|tweet|thread|type|typing|paste|pega'
+
+    return (($mentionsLinkedIn -or $mentionsX) -and $mentionsAction)
+}
+
 function Test-ShouldUseLocalInteractiveBrowserTask {
     param(
         [string]$Task
@@ -238,9 +223,15 @@ function New-OpenCodeExecutionPlan {
         [bool]$AllowLocalScriptShortcuts = $false
     )
 
-    $normalizedTask = if ($null -ne $Task) { $Task.ToLowerInvariant() } else { "" }
+    $taskForRouting = if ($null -ne $Task) {
+        [regex]::Replace($Task, '(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b', '<email>')
+    }
+    else {
+        ""
+    }
+    $normalizedTask = if ($null -ne $taskForRouting) { $taskForRouting.ToLowerInvariant() } else { "" }
     $capability = "general"
-    $agent = $null
+    $agent = "build"
     $label = "OpenCode"
     $riskLevel = "medium"
     $executionMode = "agent"
@@ -252,37 +243,37 @@ function New-OpenCodeExecutionPlan {
         switch ($explicitAgent) {
             "browser" {
                 $capability = "browser"
+                $agent = "browser"
                 $label = "OpenCode Browser"
             }
             "docs" {
                 $capability = "docs"
+                $agent = "docs"
                 $label = "OpenCode Docs"
             }
             "sheets" {
                 $capability = "sheets"
+                $agent = "sheets"
                 $label = "OpenCode Sheets"
             }
             "computer" {
                 $capability = "computer"
+                $agent = "computer"
                 $label = "OpenCode Computer"
             }
             "social" {
                 $capability = "social"
+                $agent = "social"
                 $label = "OpenCode Social"
-                $extraInstructions = @"
-This is a logged-in social workflow.
-Prefer the repository Playwright helpers for X/LinkedIn, not a generic built-in browser flow.
-Do not use Microsoft Edge or the system default browser for these repository Playwright workflows. Use the configured bot Chrome / Chrome-profile flow exposed by the repository helpers.
-When invoking repository wrappers such as Invoke-XDraft.ps1, Invoke-LinkedInDraft.ps1, or Invoke-WebInteractive.ps1, always pass the task through a UTF-8 temporary .txt file via -TaskFile instead of inline text parameters.
-If research is needed first, do that before browser interaction.
-If login is required, leave the browser open and return exactly:
-[LOGIN_REQUIRED]
-Site: <site name>
-Reason: <brief reason>
-Do not close the browser in that case. Preserve provided text exactly. Use 0-3 emojis. Keep X single posts within 280 chars. Verify the visible composer/text state before reporting draft ready.
-"@.Trim()
             }
         }
+    }
+
+    $prefersSocialSpecialist = Test-ShouldPreferSocialSpecialist -Task $Task
+    if ($prefersSocialSpecialist -and $capability -notin @("social", "outlook")) {
+        $capability = "social"
+        $agent = "social"
+        $label = "OpenCode Social"
     }
 
     $outlookPattern = '(?i)\b(outlook|correo|correos|email|emails|mail|inbox|bandeja|unread|no le[ií]dos?|send email|send mail|reply|reply to|responder)\b'
@@ -291,30 +282,16 @@ Do not close the browser in that case. Preserve provided text exactly. Use 0-3 e
     if ($normalizedTask -match $outlookPattern -and $normalizedTask -notmatch $explicitWebmailPattern) {
         $capability = "outlook"
         $extraInstructions = @"
-This is an Outlook desktop workflow, not a general browser task.
-Prefer the local repository Outlook scripts under .\skills\Outlook\ and Microsoft Outlook COM automation over Playwright or website navigation.
-If the user asked to check or review emails, start with .\skills\Outlook\check-outlook-emails.ps1 or .\skills\Outlook\search-outlook-emails.ps1 as appropriate.
-For "today"/"hoy" mailbox checks, prefer a bounded command such as .\skills\Outlook\check-outlook-emails.ps1 -DateFilter (Get-Date) -JSON, and add -QuickCheck when a fast inbox-only pass is acceptable.
-Prefer JSON output when the goal is to summarize sender, subject, and time.
-Use browser or webmail only if the user explicitly asked for Gmail, Outlook Web, outlook.com, hotmail, or another website.
+This is an Outlook desktop workflow.
+Use the repository Outlook scripts under .\skills\Outlook\ with Outlook COM.
+Do not switch to browser or webmail unless the user explicitly asked for webmail.
 "@.Trim()
     }
 
     $browserPattern = '(google|browser|navega|navegar|busca|buscar|search|screenshot|captura|capturas|pantallazo|playwright|web)'
     if ($capability -ne "outlook" -and $capability -ne "social" -and $normalizedTask -match $browserPattern) {
         $capability = "browser"
-        $extraInstructions = @"
-This is a web task. Use the simplest reliable method first.
-Use `web-inspect` before broad WebFetch reads when a known page or discovered asset URL is available.
-For discovery tasks, inspect root pages and referenced assets before guessing routes.
-For SPA/data-file sites, inspect the asset directly and extract only needed fields.
-For large JS/JSON/RSS/XML assets, prefer local filtering or targeted extraction instead of pulling the whole body into model context when that saves tokens.
-When the task depends on choosing the correct item from a set, identify the candidate list first and inspect only the selected item afterward.
-If you need to hand post text or long instructions to a repository script, write them to a UTF-8 temporary .txt file and pass that file path instead of inline text.
-Use Playwright only when rendering or interaction is truly required.
-If the downstream goal is a short post, stop at the minimum source package instead of writing a long intermediate summary.
-Do not restart steps that already succeeded.
-"@.Trim()
+        $agent = "browser"
     }
 
     if ($AllowLocalScriptShortcuts -and (Test-ShouldUseLocalGoogleResultsScreenshots -Task $Task)) {

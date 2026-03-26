@@ -386,11 +386,44 @@ function Invoke-TelegramMessageRoute {
         return
     }
 
+    if ($text -match '^/(opencodemodel)(?:\s+(.+))?$' -or $text -match '^/switch\s+opencode\s+model(?:\s+(.+))?$') {
+        $requestedModel = ""
+        if ($matches.Count -gt 1 -and $null -ne $matches[1]) {
+            $requestedModel = "$($matches[1])".Trim()
+        }
+        if ($matches.Count -gt 2 -and [string]::IsNullOrWhiteSpace($requestedModel) -and $null -ne $matches[2]) {
+            $requestedModel = "$($matches[2])".Trim()
+        }
+
+        if ([string]::IsNullOrWhiteSpace($requestedModel)) {
+            $currentModel = if ($BotConfig.OpenCode -and -not [string]::IsNullOrWhiteSpace("$($BotConfig.OpenCode.DefaultModel)")) {
+                "$($BotConfig.OpenCode.DefaultModel)"
+            }
+            else {
+                "opencode/mimo-v2-pro-free"
+            }
+            $reply = "OpenCode default model: $currentModel`n`nUsage:`n/opencodemodel mimo-v2-pro-free`n/opencodemodel kimi-k2.5`n/switch opencode model mimo-v2-pro-free"
+            Send-TelegramText -chatId $chatId -text $reply
+            return
+        }
+
+        try {
+            $persistedModel = Set-PersistentOpenCodeDefaultModel -ProjectRoot $WorkDir -Value $requestedModel
+            $BotConfig.OpenCode.DefaultModel = $persistedModel
+            Send-TelegramText -chatId $chatId -text "OpenCode default model changed to: $persistedModel"
+        }
+        catch {
+            Send-TelegramText -chatId $chatId -text "Could not change OpenCode model: $($_.Exception.Message)"
+        }
+        return
+    }
+
     if ($text -eq "/help" -or $text -eq "/start") {
         $helpMsg = "*Bot Commands:*`n`n"
         $helpMsg += "*/new* - Clear conversation memory.`n"
         $helpMsg += "*/doctor* - Run local diagnostics.`n"
         $helpMsg += "*/stopopencode* - Stop the OpenCode server and active OpenCode jobs.`n"
+        $helpMsg += "*/opencodemodel [model]* - Show or change the OpenCode model.`n"
         $helpMsg += "*/restart* - Restart the bot and its connections.`n"
         $helpMsg += "*/thinking [low|none]* - Change reasoning effort.`n`n"
         $helpMsg += "*Orchestrator Capabilities:*`n"

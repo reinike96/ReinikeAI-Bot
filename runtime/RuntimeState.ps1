@@ -18,6 +18,7 @@ function Initialize-RuntimeState {
         CurrentReasoningEffort = $BotConfig.LLM.ReasoningEffort
         ActiveJobs             = @()
         ActiveProcesses        = @()
+        ParallelOpenCodeGroups = @{}
         PendingChats           = @()
         PendingConfirmations   = @{}
         WindowsUseApprovals    = @{}
@@ -67,6 +68,51 @@ function Remove-ActiveJobById {
 
 function Get-ActiveProcesses {
     return @((Get-RuntimeContext).ActiveProcesses)
+}
+
+function Get-ParallelOpenCodeGroups {
+    return (Get-RuntimeContext).ParallelOpenCodeGroups
+}
+
+function Get-ParallelOpenCodeGroup {
+    param([string]$GroupId)
+
+    if ([string]::IsNullOrWhiteSpace($GroupId)) {
+        return $null
+    }
+
+    $groups = Get-ParallelOpenCodeGroups
+    if ($groups.ContainsKey($GroupId)) {
+        return $groups[$GroupId]
+    }
+
+    return $null
+}
+
+function Add-ParallelOpenCodeGroup {
+    param(
+        [string]$GroupId,
+        [object]$GroupRecord
+    )
+
+    if ([string]::IsNullOrWhiteSpace($GroupId) -or $null -eq $GroupRecord) {
+        return
+    }
+
+    (Get-ParallelOpenCodeGroups)[$GroupId] = $GroupRecord
+}
+
+function Remove-ParallelOpenCodeGroup {
+    param([string]$GroupId)
+
+    $groups = Get-ParallelOpenCodeGroups
+    if ($groups.ContainsKey($GroupId)) {
+        $group = $groups[$GroupId]
+        $groups.Remove($GroupId)
+        return $group
+    }
+
+    return $null
 }
 
 function Add-ActiveProcess {

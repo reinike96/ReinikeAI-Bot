@@ -5,6 +5,9 @@
         "read": "allow",
         "write": "allow",
         "fetch": "allow",
+        "external_directory": {
+            "~/OneDrive/Desktop/**": "allow"
+        },
         "skill": {
             "*": "allow"
         }
@@ -18,7 +21,7 @@
     },
     "agent": {
         "build": {
-            "model": "opencode/kimi-k2.5",
+            "model": "opencode/mimo-v2-pro-free",
             "variant": "high",
             "tools": {
                 "playwright_browser_*": false,
@@ -30,7 +33,7 @@
             }
         },
         "browser": {
-            "model": "opencode/kimi-k2.5",
+            "model": "opencode/mimo-v2-pro-free",
             "variant": "high",
             "tools": {
                 "playwright_browser_*": true
@@ -56,7 +59,7 @@
             }
         },
         "social": {
-            "model": "opencode/kimi-k2.5",
+            "model": "opencode/mimo-v2-pro-free",
             "variant": "high",
             "tools": {
                 "playwright_browser_*": true,

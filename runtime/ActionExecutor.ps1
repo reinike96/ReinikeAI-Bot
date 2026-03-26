@@ -405,9 +405,16 @@ function Invoke-ParsedAction {
             return [PSCustomObject]$result
         }
 
-        $cmdRes = Run-PCAction -actionStr $cmd -chatId $ChatId
-        Add-ChatMemory -chatId $ChatId -role "user" -content "[SYSTEM - CMD RESULT]:`n$cmdRes`n`nAnalyze the result above and reply to the user. Do not repeat the command."
-        $result.RequiresLoop = $true
+        $jobLabel = "Direct CMD"
+        $jobRecord = Start-ScriptJob -scriptCmd $cmd -chatId $ChatId -taskLabel $jobLabel -originalTask $cmd -jobType "LocalCommand"
+        $jobRecord.Label = $jobLabel
+        $jobRecord.Capability = "local_command"
+        $jobRecord.ExecutionMode = "background_cmd"
+        Add-ActiveJob -JobRecord $jobRecord
+        Write-JobsFile
+        $emojiHourglass = [char]::ConvertFromUtf32(0x23F3)
+        Update-TelegramStatus -job $jobRecord -text "$emojiHourglass PC CMD: Running command, please wait..."
+        $result.SuppressFinalReply = $true
         return [PSCustomObject]$result
     }
 
@@ -513,12 +520,12 @@ function Invoke-ParsedAction {
         $hasPendingNativeConfirmation = ($null -ne (Find-PendingConfirmation -ChatId $ChatId))
         foreach ($btn in $buttonEntries) {
             $callbackData = Get-ButtonCallbackData -Button $btn
-            if ($callbackData -match '^(confirm_windows_use.*|execute_windows_task.*|retry_windows_task.*|repair_env|skip|approve.*|reject.*|cancel.*)$') {
+            if ($callbackData -match '^(confirm_cmd:|cancel_cmd:|confirm_opencode:|cancel_opencode:|confirm_windows_use.*|execute_windows_task.*|retry_windows_task.*|repair_env$|skip$|restart_confirm$)') {
                 $hasModelGeneratedConfirmation = $true
                 break
             }
 
-            if ($hasPendingNativeConfirmation -and $callbackData -match '^(approve.*|reject.*|cancel.*|confirm.*|execute.*|retry.*)$') {
+            if ($hasPendingNativeConfirmation -and $callbackData -match '^(confirm_cmd:|cancel_cmd:|confirm_opencode:|cancel_opencode:|confirm_windows_use.*|execute_windows_task.*|retry_windows_task.*|repair_env$|skip$|restart_confirm$)') {
                 $hasModelGeneratedConfirmation = $true
                 break
             }
@@ -527,7 +534,6 @@ function Invoke-ParsedAction {
         if ($hasModelGeneratedConfirmation) {
             Write-Host "[ACTION] Ignoring model-generated confirmation buttons: $($Item.Text)" -ForegroundColor DarkYellow
             Add-ChatMemory -chatId $ChatId -role "user" -content "[SYSTEM]: The previous BUTTONS action was ignored because it attempted to create a model-generated confirmation flow. Sensitive confirmations are created only by the orchestrator. If the user already approved the native orchestrator confirmation, treat that action as authorized and do not ask for confirmation again."
-            $result.SuppressFinalReply = $true
             return [PSCustomObject]$result
         }
 

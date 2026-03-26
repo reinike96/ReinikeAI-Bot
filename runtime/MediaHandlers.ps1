@@ -38,8 +38,52 @@ function Get-TelegramFile {
     return $null
 }
 
+function Test-DetectedFileDeliveryContext {
+    param(
+        [string]$Text,
+        [string]$RawPath,
+        [string]$ResolvedPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $false
+    }
+
+    $candidatePatterns = @(
+        $ResolvedPath,
+        $RawPath,
+        [System.IO.Path]::GetFileName($ResolvedPath)
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    if ($candidatePatterns.Count -eq 0) {
+        return $false
+    }
+
+    $deliveryHintPattern = '(?i)\b(saved|written|wrote|generated|created|exported|produced|downloaded|attached|attachment|upload(?:ed)?|output|report|result|summary|screenshot)\b'
+    $lines = $Text.Replace("`r", "") -split "`n"
+    foreach ($line in $lines) {
+        foreach ($pattern in $candidatePatterns) {
+            if ($line -notmatch [regex]::Escape($pattern)) {
+                continue
+            }
+
+            $lineWithoutPath = [regex]::Replace($line, [regex]::Escape($pattern), ' ', 1)
+            if ($lineWithoutPath -match $deliveryHintPattern) {
+                return $true
+            }
+        }
+    }
+
+    return $false
+}
+
 function Send-DetectedFiles {
-    param($chatId, $text)
+    param(
+        $chatId,
+        $text,
+        [Nullable[datetime]]$JobStartTime = $null
+    )
+
     if ([string]::IsNullOrWhiteSpace($text)) { return 0 }
 
     $sentFiles = @()
@@ -93,6 +137,25 @@ function Send-DetectedFiles {
                 Write-DailyLog -message "Ignored file outside allowed paths: $path" -type "JOB"
                 continue
             }
+
+            $hasExplicitDeliveryContext = Test-DetectedFileDeliveryContext -Text $text -RawPath $rawPath -ResolvedPath $path
+            $isFreshFile = $false
+            if ($JobStartTime) {
+                try {
+                    $fileInfo = Get-Item -LiteralPath $path -ErrorAction Stop
+                    $freshCutoff = $JobStartTime.Value.AddSeconds(-5)
+                    if ($fileInfo.LastWriteTime -ge $freshCutoff) {
+                        $isFreshFile = $true
+                    }
+                }
+                catch {}
+            }
+
+            if (-not $hasExplicitDeliveryContext -and -not $isFreshFile) {
+                Write-DailyLog -message "Ignored referenced file without generation context: $path" -type "JOB"
+                continue
+            }
+
             if ($path -match '\.txt$' -and $path -notmatch 'report|result|final|summary') {
                 Write-DailyLog -message "Ignored .txt file (likely internal log): $path" -type "JOB"
                 continue
@@ -147,6 +210,30 @@ function Run-PCAction {
 
             $process = New-Object System.Diagnostics.Process
             $process.StartInfo = $processInfo
+            $stdoutBuilder = New-Object System.Text.StringBuilder
+            $stderrBuilder = New-Object System.Text.StringBuilder
+            $stdoutEvent = $null
+            $stderrEvent = $null
+
+            $appendOutput = {
+                param($builder, $eventArgs)
+                if ($null -ne $eventArgs.Data) {
+                    [void]$builder.AppendLine($eventArgs.Data)
+                }
+            }
+
+            $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action {
+                & $Event.MessageData.Callback $Event.MessageData.Builder $Event.SourceEventArgs
+            } -MessageData @{
+                Builder = $stdoutBuilder
+                Callback = $appendOutput
+            }
+            $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
+                & $Event.MessageData.Callback $Event.MessageData.Builder $Event.SourceEventArgs
+            } -MessageData @{
+                Builder = $stderrBuilder
+                Callback = $appendOutput
+            }
 
             $startTime = Get-Date
             $process.Start() | Out-Null
@@ -158,15 +245,15 @@ function Run-PCAction {
                 ChatId = $chatId
                 CreatedAt = Get-Date
             }
+            $process.BeginOutputReadLine()
+            $process.BeginErrorReadLine()
             $exited = $process.WaitForExit(300000)
             $elapsed = ((Get-Date) - $startTime).TotalSeconds
 
             if ($exited) {
-                $stdout = $process.StandardOutput.ReadToEnd()
-                $stderr = $process.StandardError.ReadToEnd()
-                $res = $stdout + $stderr
+                $process.WaitForExit()
+                $res = $stdoutBuilder.ToString() + $stderrBuilder.ToString()
                 Remove-ActiveProcessByPid -Pid $trackedPid
-                $process.Dispose()
 
                 Write-DailyLog -message "Command finished in $($elapsed.ToString('F2'))s. Output length: $($res.Length)" -type "CMD"
                 if ($statusMsgId) { Edit-TelegramText -chatId $chatId -messageId $statusMsgId -text "✅ Command finished in $($elapsed.ToString('F2'))s." }
@@ -181,7 +268,6 @@ function Run-PCAction {
                     try { $process.Kill() } catch {}
                 }
                 Remove-ActiveProcessByPid -Pid $trackedPid
-                $process.Dispose()
                 Write-DailyLog -message "Command timed out after 300s. Command: $actionStr" -type "WARN"
                 if ($statusMsgId) { Edit-TelegramText -chatId $chatId -messageId $statusMsgId -text "❌ Timeout: Command exceeded 300 seconds." }
                 return "Timeout: the command exceeded 300 seconds"
@@ -191,6 +277,28 @@ function Run-PCAction {
             Write-DailyLog -message "Error running command: $_" -type "ERROR"
             if ($statusMsgId) { Edit-TelegramText -chatId $chatId -messageId $statusMsgId -text "❌ Error: $_" }
             return "Execution error: $_"
+        }
+        finally {
+            foreach ($eventRef in @($stdoutEvent, $stderrEvent)) {
+                if ($null -eq $eventRef) {
+                    continue
+                }
+
+                try { Unregister-Event -SourceIdentifier $eventRef.Name -ErrorAction SilentlyContinue } catch {}
+                try { Remove-Job -Id $eventRef.Id -Force -ErrorAction SilentlyContinue } catch {}
+            }
+
+            if ($null -ne $process) {
+                try {
+                    if (-not $process.HasExited) {
+                        try { $process.CancelOutputRead() } catch {}
+                        try { $process.CancelErrorRead() } catch {}
+                    }
+                }
+                catch {}
+
+                try { $process.Dispose() } catch {}
+            }
         }
     }
 }

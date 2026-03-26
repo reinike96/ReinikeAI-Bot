@@ -71,6 +71,22 @@ function Get-CapabilityPackRegistry {
             )
             InstallCheckType = "path"
             InstallCheckTarget = @("node_modules\\playwright")
+        },
+        [PSCustomObject]@{
+            Name = "research"
+            DisplayName = "Deep Research pack"
+            Description = "OpenCode research skills and web-search agents for structured multi-step research."
+            Agent = "build"
+            SettingKey = "research"
+            ToolFlags = @()
+            SuggestedProjects = @(
+                "Deep-Research-skills"
+            )
+            InstallCheckType = "path"
+            InstallCheckTarget = @(
+                "$env:USERPROFILE\\.claude\\skills\\research\\SKILL.md",
+                "$env:USERPROFILE\\.config\\opencode\\agents\\web-search.md"
+            )
         }
     )
 }
@@ -110,7 +126,10 @@ function Get-CapabilityPackState {
         $allFlagsEnabled = $false
         if ($configJson -and $configJson.agent) {
             $agentNode = $configJson.agent.PSObject.Properties[$pack.Agent]
-            if ($agentNode -and $agentNode.Value.tools) {
+            if ($pack.ToolFlags.Count -eq 0) {
+                $allFlagsEnabled = [bool]($configuredPacks[$pack.SettingKey])
+            }
+            elseif ($agentNode -and $agentNode.Value.tools) {
                 $allFlagsEnabled = $true
                 foreach ($flag in $pack.ToolFlags) {
                     $flagProp = $agentNode.Value.tools.PSObject.Properties[$flag]

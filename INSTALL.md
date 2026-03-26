@@ -98,7 +98,7 @@ Edit `config/settings.json` and fill in:
 - `opencode.apiKey`
 - `opencode.serverPassword`
 
-By default, fresh installs now point OpenCode tasks to `opencode/kimi-k2.5`. The bundled OpenCode user-config template also pins the `build`, `browser`, and `social` agents to `variant: "high"` so the provider-side OpenCode model starts with the Kimi 2.5 high-effort path unless you override it locally.
+By default, fresh installs now point OpenCode tasks to `opencode/mimo-v2-pro-free`. The bundled OpenCode user-config template also pins the `build`, `browser`, and `social` agents to `variant: "high"` so the provider-side OpenCode model starts with MiMo V2 Pro Free unless you override it locally.
 
 You can also override any of those with environment variables later.
 
@@ -114,6 +114,19 @@ It also includes an agent profile guide at [`config/opencode-agents.md`](./confi
 - `sheets`
 - `computer`
 - `social`
+- `research`
+
+The installer can also install an optional OpenCode Deep Research pack vendored in this repository. That setup copies:
+
+- `vendor/deep-research-skills/opencode/skills/*` -> `~/.claude/skills/`
+- `vendor/deep-research-skills/opencode/agents/web-search.md` -> `~/.config/opencode/agents/web-search.md`
+- `vendor/deep-research-skills/opencode/agents/web-search-modules/*` -> `~/.config/opencode/agents/web-search-modules/`
+
+Important for this pack:
+
+- OpenCode web search requires `OPENCODE_ENABLE_EXA=1`
+- `pyyaml` is required for the JSON validation helper
+- the pack is for OpenCode, not for direct orchestrator execution
 
 To create your user config:
 
@@ -164,6 +177,7 @@ This script:
 - asks whether Playwright dependencies should be installed automatically
 - asks which optional OpenCode capability packs should be enabled
 - asks, pack by pack, whether the selected capability packs should be installed immediately
+- can install the optional Deep Research pack for OpenCode
 - writes `config/settings.json` for you
 - updates the local `PERSONAL DATA.local.md` file
 - copies the OpenCode user config template for you
@@ -193,6 +207,7 @@ Check these items:
 3. Sending `/start` to the bot produces a Telegram response.
 4. An OpenCode-backed task can complete successfully.
 5. `/doctor` shows the expected capability pack state.
+6. If you enabled Deep Research, the shell that runs OpenCode has `OPENCODE_ENABLE_EXA=1`.
 
 ## Environment variable overrides
 
