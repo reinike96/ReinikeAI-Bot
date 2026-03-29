@@ -112,7 +112,7 @@ function Get-SystemStatusReport {
         $statusMsg += "`nPending confirmations: $($pendingConfirmations.Count)`n"
     }
 
-    $logPath = Join-Path $WorkDir "subagent_events.log"
+    $logPath = Join-Path $WorkDir "archives\subagent_events.log"
     if (Test-Path $logPath) {
         $lastEvents = Get-Content $logPath -Tail 3
         if ($lastEvents) {

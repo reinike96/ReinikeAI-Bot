@@ -101,3 +101,21 @@ When adding a new skill, classify it before documenting it here.
   - `.\skills\Playwright\Invoke-XDraft.ps1`
   - `.\skills\Playwright\Invoke-WebInteractive.ps1`
   - These local wrappers are for logged-in browser workflows where the browser must stay open and the page state must remain ready for manual review or publishing.
+
+## Audio TTS
+
+- Purpose: generate audio from text using OpenRouter's gpt-audio-mini model
+- Classification: `orchestrator-only`
+- Script: `.\skills\Audio_TTS\Generate-Audio.ps1`
+- Usage: 
+  - From text: `powershell -File ".\skills\Audio_TTS\Generate-Audio.ps1" -Text "Your text here" [-Voice "alloy"]`
+  - From file: `powershell -File ".\skills\Audio_TTS\Generate-Audio.ps1" -FilePath "path\to\file.txt" [-Voice "alloy"]`
+- Available voices: `alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `onyx`, `nova`, `sage`, `shimmer`, `verse`, `marin`, `cedar`
+- Requirements: Uses your existing OpenRouter API key from config/settings.json
+- Notes:
+  - Maximum text length is ~4000 characters (will be truncated if longer)
+  - Use -FilePath to read text from a .txt file instead of -Text
+  - Audio is saved as WAV in the archives folder
+  - Uses the `openai/gpt-audio-mini` model through OpenRouter's chat completions API
+  - Audio is automatically sent to Telegram after generation
+  - The orchestrator should use this skill when the user explicitly requests an audio response

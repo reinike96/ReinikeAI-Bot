@@ -44,6 +44,30 @@ function Get-LoginRequiredRequest {
     }
 }
 
+function Get-ToolsMissingRequest {
+    param([string]$ResultText)
+    if ([string]::IsNullOrWhiteSpace($ResultText)) { return $null }
+    if ($ResultText -notmatch '(?s)\[TOOLS_MISSING\]') { return $null }
+    $missingTool = ""; $task = ""; $reason = ""
+    if ($ResultText -match '(?s)MissingTool:\s*(?<tool>[^\r\n]+)') { $missingTool = $Matches["tool"].Trim() }
+    if ($ResultText -match '(?s)Task:\s*(?<t>[^\r\n]+)') { $task = $Matches["t"].Trim() }
+    if ($ResultText -match '(?s)Reason:\s*(?<r>[^\r\n]+)') { $reason = $Matches["r"].Trim() }
+    return [PSCustomObject]@{ MissingTool = $missingTool; Task = $task; Reason = $reason }
+}
+
+function Get-SuggestedAgentForMissingTool {
+    param([string]$MissingTool)
+    if ([string]::IsNullOrWhiteSpace($MissingTool)) { return $null }
+    $tl = $MissingTool.ToLowerInvariant()
+    if ($tl -match "playwright|browser|navigate|click|dom") { return [PSCustomObject]@{ Agent = "browser"; ToolName = "Playwright MCP" } }
+    if ($tl -match "excel|spreadsheet|xlsx|csv|workbook") { return [PSCustomObject]@{ Agent = "sheets"; ToolName = "Excel MCP" } }
+    if ($tl -match "file.converter|pdf|ocr") { return [PSCustomObject]@{ Agent = "docs"; ToolName = "file-converter MCP" } }
+    if ($tl -match "word|docx|document generation") { return [PSCustomObject]@{ Agent = "docs"; ToolName = "Word MCP" } }
+    if ($tl -match "computer|desktop|mouse|keyboard|gui|window") { return [PSCustomObject]@{ Agent = "computer"; ToolName = "computer-control MCP" } }
+    if ($tl -match "stealth|social|linkedin|x\.com") { return [PSCustomObject]@{ Agent = "social"; ToolName = "stealth browser MCP" } }
+    return $null
+}
+
 function Get-DraftReadyRequest {
     param([string]$ResultText)
 
@@ -77,6 +101,7 @@ function Get-OrchestratorUsableResultText {
         "[PUBLISH_CONFIRMATION_REQUIRED]",
         "[WINDOWS_USE_FALLBACK_REQUIRED]",
         "[LOGIN_REQUIRED]",
+        "[TOOLS_MISSING]",
         "[DRAFT_READY]",
         "[POSTED]",
         "**All tasks complete.**",
@@ -741,7 +766,7 @@ function Get-OpenCodeHeartbeatSnapshot {
         "$($JobRecord.HeartbeatPath)"
     }
     else {
-        Join-Path $WorkDir ("heartbeat_{0}.json" -f $JobRecord.Job.Id)
+        Join-Path $WorkDir ("archives\heartbeat_{0}.json" -f $JobRecord.Job.Id)
     }
 
     $snapshot = [ordered]@{
@@ -991,7 +1016,7 @@ function Get-OpenCodeDiagnosticsSnapshot {
 function Get-OpenCodeFallbackLogPreview {
     param([string]$WorkDir)
 
-    $logPath = Join-Path $WorkDir "subagent_events.log"
+    $logPath = Join-Path $WorkDir "archives\subagent_events.log"
     if (-not (Test-Path $logPath)) {
         return ""
     }
@@ -1307,7 +1332,7 @@ function Update-ActiveJobTelemetry {
                     $statusMsg = New-OpenCodeTelemetryStatusMessage -JobRecord $j -Snapshot $snapshot -ProgressState $progressState -TotalElapsedMinutes $totalElapsed
                 }
                 else {
-                    $lastLog = Get-Content "$WorkDir\subagent_events.log" -Tail 5 | Where-Object { $_ -match $j.Type } | Select-Object -Last 1
+                    $lastLog = Get-Content "$WorkDir\archives\subagent_events.log" -Tail 5 | Where-Object { $_ -match $j.Type } | Select-Object -Last 1
                     $emojiDoc = [char]::ConvertFromUtf32(0x1F4DC)
                     $logContext = if ($lastLog) { "$emojiDoc *Latest logged event:*`n``$($lastLog.Trim())``" } else { "Waiting for process output..." }
                     $emojiWait = [char]::ConvertFromUtf32(0x231B)
@@ -1433,6 +1458,41 @@ function Complete-ActiveJobs {
             if (-not [string]::IsNullOrWhiteSpace($usageTelegram)) {
                 Send-TelegramText -chatId $j.ChatId -text $usageTelegram
                 $usageTelegram = ""
+            }
+
+            # TOOLS_MISSING handler: fail-fast re-routing
+            if ($j.Type -eq "OpenCode") {
+                $toolsMissing = Get-ToolsMissingRequest -ResultText $subRes
+                if ($null -ne $toolsMissing) {
+                    $missingToolName = $toolsMissing.MissingTool
+                    $missingReason = $toolsMissing.Reason
+                    if ([string]::IsNullOrWhiteSpace($missingToolName)) { $missingToolName = "unknown" }
+                    if ([string]::IsNullOrWhiteSpace($missingReason)) { $missingReason = "Agent lacks required tools." }
+                    $currentAgent = if ([string]::IsNullOrWhiteSpace("$($j.RequestedAgent)")) { "build" } else { "$($j.RequestedAgent)" }
+                    $suggested = Get-SuggestedAgentForMissingTool -MissingTool $missingToolName
+
+                    if ($null -ne $suggested -and $suggested.Agent -ne $currentAgent) {
+                        Write-DailyLog -message "TOOLS_MISSING: missing='$missingToolName' agent=$currentAgent -> reroute to $($suggested.Agent)" -type "WARN"
+                        $emoji = [char]::ConvertFromUtf32(0x1F504)
+                        Send-TelegramText -chatId $j.ChatId -text "$emoji Herramienta faltante: $($suggested.ToolName). Re-encaminando al agente $($suggested.Agent)..."
+                        $reJob = Start-OpenCodeJob -TaskDescription $j.Task -ChatId $j.ChatId -Agent $suggested.Agent -TimeoutSec $j.TimeoutSec -AllowParallelPlan:$false
+                        $reJob.Label = "OpenCode (re-route to $($suggested.Agent))"
+                        Add-ActiveJob -JobRecord $reJob
+                        Write-JobsFile
+                        Remove-ActiveJobById -JobId $j.Job.Id
+                        Write-JobsFile
+                        continue
+                    }
+                    else {
+                        Write-DailyLog -message "TOOLS_MISSING: missing='$missingToolName' agent=$currentAgent - no re-route available" -type "WARN"
+                        $emoji = [char]::ConvertFromUtf32(0x26A0)
+                        Send-TelegramText -chatId $j.ChatId -text "$emoji Herramienta faltante: $missingToolName. Motivo: $missingReason. Necesitas instalar el MCP correspondiente."
+                        Add-ChatMemory -chatId $j.ChatId -role "system" -content ("SYSTEM: OpenCode reported missing tool '{0}' for task '{1}'. No re-route possible." -f $missingToolName, $j.Task)
+                        Remove-ActiveJobById -JobId $j.Job.Id
+                        Write-JobsFile
+                        continue
+                    }
+                }
             }
 
             if (($subRes -match "\[ERROR_OPENCODE_CREDITS\]") -or ($subRes -match "\[OpenCode termino sin output\]")) {
@@ -1675,7 +1735,7 @@ function Complete-ActiveJobs {
                     $fallbackCombined
                 }
             }
-            $sysMsg = ("SYSTEM: Task '{0}' completed by {1}. Result:`n{2}`n`nYou must now analyze this result and reply to the user with a clear English summary. Do not delegate again. Respond directly." -f $j.Task, $j.Type, $memorySummary)
+            $sysMsg = ("SYSTEM: Task '{0}' completed by {1}. Result:`n{2}`n`nAnalyze this result. If the task is fully complete, summarize for the user. If more work is needed (e.g., the result shows partial progress, errors, or follow-up required), you MAY delegate again with [OPENCODE: ...] or take other actions. Do not just say you will do something - actually execute the action." -f $j.Task, $j.Type, $memorySummary)
             try {
                 Add-ChatMemory -chatId $j.ChatId -role "system" -content $sysMsg
             }

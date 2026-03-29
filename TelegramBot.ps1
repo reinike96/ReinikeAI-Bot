@@ -80,7 +80,7 @@ function Sync-OpenCodeUserConfig {
                 }
             }
         }
-        catch {}
+        catch { Write-DailyLog -message "Sync-OpenCodeUserConfig: Failed to update config at $targetPath" -type "WARN" }
     }
 }
 
@@ -155,7 +155,7 @@ function Invoke-WeeklyOpenCodeAutoUpdate {
         try {
             $lastCheckedUtc = [DateTime]::Parse("$($state.lastCheckedUtc)").ToUniversalTime()
         }
-        catch {}
+        catch { $lastCheckedUtc = $null }
     }
 
     $nowUtc = [DateTime]::UtcNow
@@ -302,6 +302,16 @@ FILES, BUTTONS, AND MEDIA:
 - Do not manually resend files the orchestrator already auto-detected and sent.
 - Use native image/audio understanding when the media is already attached. Do not offload already-available native media understanding unnecessarily.
 
+AUDIO RESPONSES:
+- If the user EXPLICITLY requests an audio response (e.g., "responde en audio", "reply with audio", "read it to me", "en voz"), use the Audio TTS skill.
+- Audio skill from text: [CMD: powershell -File ".\skills\Audio_TTS\Generate-Audio.ps1" -Text "Your response text here"]
+- Audio skill from file: [CMD: powershell -File ".\skills\Audio_TTS\Generate-Audio.ps1" -FilePath "path\to\file.txt"]
+- Available voices: alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse, marin, cedar. Default is alloy.
+- To use a specific voice: [CMD: powershell -File ".\skills\Audio_TTS\Generate-Audio.ps1" -Text "Your text" -Voice "nova"]
+- The audio is automatically sent to Telegram after generation. No need to send it separately.
+- Maximum text length is ~4000 characters. For longer content, use -FilePath to read from a file.
+- Do NOT use audio responses by default. Only use when the user explicitly requests it.
+
 STATE AND DATA:
 - Use [STATUS] when the user asks for progress.
 - Avoid repeating the same action within the same user turn. If the user explicitly asks to retry, vary the request text slightly.
@@ -314,15 +324,19 @@ STATE AND DATA:
 
 FORMAT:
 - When an action is needed, prefer one JSON object {"reply":"text for the user","actions":[...]}.
+- IMPORTANT: "actions" must ALWAYS be an ARRAY, even for a single action. Use "actions":[{"type":"CMD","command":"..."}] NOT "actions":{"type":"CMD",...}.
 - Valid action types: CMD, OPENCODE, PW_CONTENT, PW_SCREENSHOT, SCREENSHOT, STATUS, BUTTONS.
-- BUTTONS JSON uses {"type":"BUTTONS","text":"Question","buttons":[{"text":"Option","callback_data":"value"}]}.
+- CMD action: {"type":"CMD","command":"powershell command here"}
+- OPENCODE action: {"type":"OPENCODE","route":"build","task":"task description"}
+- BUTTONS action: {"type":"BUTTONS","text":"Question?","buttons":[{"text":"Option","callback_data":"value"}]}
 - Plain text is allowed when no action is needed.
 - Legacy [CMD: ...] and [OPENCODE: chat | ...] tags remain valid.
 "@.Trim()
 }
 
 Sync-OpenCodeUserConfig -ConfiguredPath $botConfig.OpenCode.ConfigPath -ProjectTemplatePath (Join-Path $scriptRoot "config\opencode.example.json")
-Invoke-WeeklyOpenCodeAutoUpdate -BotConfig $botConfig -StatePath (Join-Path $archivesDir "opencode-auto-update.json")
+# DISABLED: Auto-update disabled to prevent unexpected updates. Uncomment to re-enable.
+# Invoke-WeeklyOpenCodeAutoUpdate -BotConfig $botConfig -StatePath (Join-Path $archivesDir "opencode-auto-update.json")
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -366,7 +380,7 @@ catch {
 # --- Base Functions ---
 function Write-DailyLog {
     param([string]$message, [string]$type = "INFO")
-    $logFile = "$workDir\subagent_events.log"
+    $logFile = "$archivesDir\subagent_events.log"
     $currentDate = Get-Date -Format "yyyy-MM-dd"
     $timestamp = Get-Date -Format "HH:mm:ss"
     
@@ -381,11 +395,13 @@ function Write-DailyLog {
     $sanitized = $message
     $redactionPatterns = @(
         '(?i)\b\d{8,10}:[A-Za-z0-9_-]{20,}\b',
-        '(?i)\b(sk-or-v1|sk-[A-Za-z0-9_-]+)[A-Za-z0-9_-]*\b',
+        '(?i)\b(sk-or-v1|sk-yps|sk-[A-Za-z0-9_-]+)[A-Za-z0-9_-]*\b',
         '(?i)(Authorization["'':=\s]+Bearer\s+)[^\s]+',
         '(?i)(serverPassword["'':=\s]+)[^\s,;]+',
         '(?i)(openRouterApiKey["'':=\s]+)[^\s,;]+',
-        '(?i)(apiKey["'':=\s]+)[^\s,;]+'
+        '(?i)(apiKey["'':=\s]+)[^\s,;]+',
+        '(?i)(botToken["'':=\s]+)[^\s,;]+',
+        '(?i)(password["'':=\s]+)[^\s,;]+'
     )
     foreach ($pattern in $redactionPatterns) {
         $sanitized = [regex]::Replace($sanitized, $pattern, '$1[REDACTED]')
@@ -428,7 +444,8 @@ function Invoke-DailyArchivesTempCleanup {
     foreach ($protectedPath in @(
         ".gitkeep",
         ".daily-temp-cleanup.json",
-        "opencode-auto-update.json"
+        "opencode-auto-update.json",
+        "opencode-learnings.json"
     )) {
         [void]$protectedRelativePaths.Add($protectedPath)
     }
@@ -528,7 +545,7 @@ function Repair-JobEncoding {
 
 # --- Programmatic Job Tracking via jobs.json ---
 function Write-JobsFile {
-    $jobsFile = "$workDir\jobs.json"
+    $jobsFile = "$archivesDir\jobs.json"
     try {
         $snapshot = Get-ActiveJobs | ForEach-Object {
             @{
@@ -723,7 +740,7 @@ $flushJob = Start-ThreadJob -Name "FlushTelegram" -ScriptBlock {
 
 $cleanupMemJob = Start-ThreadJob -Name "CleanupMemory" -ScriptBlock {
     param($wd, $defaultChatId)
-    $file = Get-ChildItem -Path "$wd\mem_*.json" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $file = Get-ChildItem -Path "$wd\archives\mem_*.json" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($file -and $file.Name -match 'mem_(\d+)\.json') {
         Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
         return $Matches[1]
@@ -739,10 +756,10 @@ $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -SupportEvent 
     try {
         if (Get-Command Stop-OpenCodeServer -ErrorAction SilentlyContinue) {
             Stop-OpenCodeServer -BotConfig $using:botConfig -Reason "PowerShell exiting" -StopActiveJobs | Out-Null
+            }
         }
+        catch { Write-DailyLog -message "DailyArchivesTempCleanup: Failed to read marker file" -type "WARN" }
     }
-    catch {}
-}
 $script:CancelKeyHandler = [ConsoleCancelEventHandler]{
     param($sender, $eventArgs)
     try {

@@ -117,7 +117,7 @@ function Send-DetectedFiles {
             try {
                 $path = [System.IO.Path]::GetFullPath($path)
             }
-            catch {}
+            catch { Write-DailyLog -message "Resolve-OutputFiles: Failed to resolve path $path" -type "WARN" }
             if ($sentFiles -contains $path) { continue }
 
             $isAllowed = $false
@@ -126,7 +126,7 @@ function Send-DetectedFiles {
                 try {
                     $normalizedRoot = [System.IO.Path]::GetFullPath($root)
                 }
-                catch {}
+                catch { <# Intentionally silent - trying multiple roots #> }
 
                 if (-not [string]::IsNullOrWhiteSpace($normalizedRoot) -and $path.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
                     $isAllowed = $true
@@ -148,7 +148,7 @@ function Send-DetectedFiles {
                         $isFreshFile = $true
                     }
                 }
-                catch {}
+                catch { <# File may have been deleted - not critical #> }
             }
 
             if (-not $hasExplicitDeliveryContext -and -not $isFreshFile) {
@@ -265,7 +265,7 @@ function Run-PCAction {
                     Start-Process -FilePath "cmd.exe" -ArgumentList "/c taskkill /PID $trackedPid /T /F" -WindowStyle Hidden -Wait | Out-Null
                 }
                 catch {
-                    try { $process.Kill() } catch {}
+                    try { $process.Kill() } catch { <# Process may already be terminated #> }
                 }
                 Remove-ActiveProcessByPid -Pid $trackedPid
                 Write-DailyLog -message "Command timed out after 300s. Command: $actionStr" -type "WARN"
@@ -284,20 +284,20 @@ function Run-PCAction {
                     continue
                 }
 
-                try { Unregister-Event -SourceIdentifier $eventRef.Name -ErrorAction SilentlyContinue } catch {}
-                try { Remove-Job -Id $eventRef.Id -Force -ErrorAction SilentlyContinue } catch {}
+                try { Unregister-Event -SourceIdentifier $eventRef.Name -ErrorAction SilentlyContinue } catch { <# Event may not exist #> }
+                try { Remove-Job -Id $eventRef.Id -Force -ErrorAction SilentlyContinue } catch { <# Job may not exist #> }
             }
 
             if ($null -ne $process) {
                 try {
                     if (-not $process.HasExited) {
-                        try { $process.CancelOutputRead() } catch {}
-                        try { $process.CancelErrorRead() } catch {}
+                        try { $process.CancelOutputRead() } catch { <# Stream may already be closed #> }
+                        try { $process.CancelErrorRead() } catch { <# Stream may already be closed #> }
                     }
                 }
-                catch {}
+                catch { <# Process cleanup - not critical #> }
 
-                try { $process.Dispose() } catch {}
+                try { $process.Dispose() } catch { <# Process already disposed #> }
             }
         }
     }
@@ -325,7 +325,7 @@ function Stop-TrackedPCCommands {
                 Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue
                 $stoppedPids += $targetPid
             }
-            catch {}
+            catch { <# Process may already be terminated #> }
         }
         finally {
             Remove-ActiveProcessByPid -Pid $targetPid
@@ -335,7 +335,7 @@ function Stop-TrackedPCCommands {
     try {
         Write-DailyLog -message "Stop-TrackedPCCommands reason='$Reason' stopped_pids=$(@($stoppedPids | Select-Object -Unique).Count)" -type "SYSTEM"
     }
-    catch {}
+    catch { Write-Host "Stop-TrackedPCCommands: Failed to log" }
 
     return [PSCustomObject]@{
         Reason = $Reason
@@ -364,13 +364,13 @@ function Stop-ActiveLocalJobs {
     }
 
     if (Get-Command Write-JobsFile -ErrorAction SilentlyContinue) {
-        try { Write-JobsFile } catch {}
+        try { Write-JobsFile } catch { Write-DailyLog -message "Stop-ActiveLocalJobs: Failed to write jobs file" -type "WARN" }
     }
 
     try {
         Write-DailyLog -message "Stop-ActiveLocalJobs reason='$Reason' stopped_jobs=$(@($stoppedJobIds | Select-Object -Unique).Count)" -type "SYSTEM"
     }
-    catch {}
+    catch { Write-Host "Stop-ActiveLocalJobs: Failed to log" }
 
     return [PSCustomObject]@{
         Reason = $Reason
@@ -421,13 +421,13 @@ function Stop-UntrackedAutomationProcesses {
             Start-Process -FilePath "cmd.exe" -ArgumentList "/c taskkill /PID $targetPid /T /F" -WindowStyle Hidden -Wait | Out-Null
             $stopped += [PSCustomObject]@{ Pid = $targetPid; Name = $name }
         }
-        catch {}
+        catch { Write-DailyLog -message "Stop-UntrackedAutomationProcesses: Failed to kill process $targetPid ($name)" -type "WARN" }
     }
 
     try {
         Write-DailyLog -message "Stop-UntrackedAutomationProcesses reason='$Reason' stopped=$(@($stopped).Count)" -type "SYSTEM"
     }
-    catch {}
+    catch { Write-Host "Stop-UntrackedAutomationProcesses: Failed to log" }
 
     return [PSCustomObject]@{
         Reason = $Reason

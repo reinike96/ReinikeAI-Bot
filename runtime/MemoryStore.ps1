@@ -1,6 +1,6 @@
 function Get-ChatMemory {
     param($chatId)
-    $file = "$workDir\mem_$chatId.json"
+    $file = "$workDir\archives\mem_$chatId.json"
     if (Test-Path $file) {
         try {
             $content = Get-Content $file -Raw -ErrorAction Stop
@@ -11,7 +11,7 @@ function Get-ChatMemory {
                 }
             }
         }
-        catch { }
+        catch { Write-DailyLog -message "Get-ChatMemory: Failed to read memory file for chat $chatId" -type "WARN" }
     }
     return @()
 }
@@ -335,7 +335,7 @@ function Convert-ToCompactChatMemoryContent {
 
 function Add-ChatMemory {
     param($chatId, $role, $content)
-    $file = "$workDir\mem_$chatId.json"
+    $file = "$workDir\archives\mem_$chatId.json"
     [array]$mem = Get-ChatMemory -chatId $chatId
     $normalizedContent = Convert-ToCompactChatMemoryContent -Content $content
     $mem += @{ "role" = $role; "content" = $normalizedContent }
@@ -349,13 +349,13 @@ function Add-ChatMemory {
 
 function Clear-ChatMemory {
     param($chatId)
-    $file = "$workDir\mem_$chatId.json"
+    $file = "$workDir\archives\mem_$chatId.json"
     if (Test-Path $file) { Remove-Item $file -Force -ErrorAction SilentlyContinue }
 }
 
 function Optimize-ChatMemory {
     param($chatId)
-    $file = "$workDir\mem_$chatId.json"
+    $file = "$workDir\archives\mem_$chatId.json"
     if (-not (Test-Path $file)) { return }
 
     try {

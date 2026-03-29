@@ -50,8 +50,16 @@ function Get-ActionPayloadList {
         return @($Actions)
     }
 
+    # If it's an array, return as-is
     if ($Actions -is [System.Collections.IEnumerable] -and $Actions -isnot [pscustomobject] -and $Actions -isnot [hashtable]) {
         return @($Actions)
+    }
+
+    # If it's a single object with a "type" property, wrap it in an array
+    if ($Actions -is [pscustomobject] -or $Actions -is [hashtable]) {
+        if ($Actions.PSObject.Properties["type"]) {
+            return @($Actions)
+        }
     }
 
     return @($Actions)
@@ -298,7 +306,7 @@ function Convert-AIResponseToActions {
         })
     }
 
-    $tagPattern = '(?is)\[BUTTONS:.*?(?=\]\]|\]$)(?:\]\]|\])|\[(OPENCODE|CMD|SCREENSHOT|STATUS|PW_CONTENT|PW_SCREENSHOT).*?\]'
+    $tagPattern = '(?is)\[BUTTONS:.*?\]\]|\[(OPENCODE|CMD|SCREENSHOT|STATUS|PW_CONTENT|PW_SCREENSHOT).*?\]'
     $matches = [regex]::Matches($Response, $tagPattern)
     $lastPos = 0
 
@@ -328,7 +336,7 @@ function Convert-AIResponseToActions {
             continue
         }
 
-        if ($tag -match '(?is)^\[BUTTONS:\s*(.+?)\s*\|\s*(.+?)(?=\]\]|\]$)(?:\]\]|\])$') {
+        if ($tag -match '(?is)^\[BUTTONS:\s*(.+?)\s*\|\s*(.+)\]\]$') {
             $items += [PSCustomObject]@{
                 Kind       = "action"
                 ActionType = "BUTTONS"

@@ -5,6 +5,7 @@
   "description": "Telegram-driven Windows orchestrator with OpenCode and Playwright helpers",
   "license": "MIT",
   "dependencies": {
-    "playwright": "^1.52.0"
+    "playwright": "^1.52.0",
+    "youtube-transcript-api": "^3.0.6"
   }
 }

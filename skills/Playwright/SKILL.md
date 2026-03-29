@@ -47,3 +47,43 @@ Use these local wrappers for logged-in social composition workflows that must le
 - If you use a Google Search URL instead of an action, the script will automatically redirect it to `SearchGoogle`.
 - **IMPORTANT:** If you already have a Google search URL (like `https://google.com/search?q=zapatillas`), use `Screenshot` action instead of `SearchGoogle` to avoid conflicts.
 - If you use `GetScreenshot`, the script will automatically alias it to `Screenshot`.
+
+---
+
+## ⚠️ CRITICAL: Chrome Connection Pattern (Custom Scripts)
+
+When writing **custom Playwright scripts** (outside the standard skill commands), follow this pattern to avoid breaking browser state:
+
+### ❌ WRONG - Launches new Chrome (loses dark mode, cookies, session):
+```javascript
+const browser = await chromium.launchPersistentContext(profileDir, {
+    headless: false,
+    executablePath: chromeExecutable,
+    args: ['--no-first-run'],
+});
+```
+
+### ✅ CORRECT - Connects to existing Chrome via CDP:
+```javascript
+// Step 1: Ensure Chrome is running with remote debugging
+await ensureManagedChrome({
+    chromeExecutable,
+    userDataDir: launchProfile.userDataDir,
+    profileDirectory: launchProfile.profileDirectory,
+    debugPort: 9333,
+    startUrl: videoUrl,
+});
+
+// Step 2: Connect via CDP
+const browser = await chromium.connectOverCDP('http://127.0.0.1:9333');
+const context = browser.contexts()[0];
+```
+
+### Why this matters:
+- `launchPersistentContext` creates a **new Chrome instance** without your real profile state
+- `connectOverCDP` connects to Chrome **with your profile** (dark mode, cookies, logged-in sessions)
+- YouTube, Google, and other sites behave differently without proper cookies/session
+
+### Reference:
+- See `archives/extract-transcript.js` for a working example
+- The `browser-helper.js` already implements this correctly via `ensureManagedChrome()` + `connectToManagedBrowser()`

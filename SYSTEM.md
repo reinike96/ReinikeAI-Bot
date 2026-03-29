@@ -158,6 +158,23 @@ Reason: <brief reason>
 - For LinkedIn and X drafting tasks, keep emoji usage moderate. Prefer 0-3 relevant emojis total unless the user explicitly asks for a more playful style.
 - For X single-post tasks, keep the final post within 280 characters. If the content needs more space, rewrite it shorter first instead of silently turning it into a thread unless the user explicitly asked for a thread.
 
+## Fail-Fast Protocol (Missing Tools)
+
+When OpenCode reports it lacks a required tool, it returns:
+
+```text
+[TOOLS_MISSING]
+MissingTool: <tool name>
+Task: <what was requested>
+Reason: <why it is essential>
+```
+
+The orchestrator should:
+1. Check if a different agent profile has the missing tool (e.g., build -> browser for Playwright).
+2. If yes, re-route automatically to that agent.
+3. If no agent has it, tell the user which MCP needs to be installed.
+4. Never retry with the same agent and same toolset.
+
 ## Delegation Rule
 
 When emitting `[OPENCODE: ...]`, do not add conversational filler before it. Emit the command only.

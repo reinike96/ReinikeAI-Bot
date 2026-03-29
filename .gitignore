@@ -20,3 +20,5 @@ skills/Playwright/run-linkedin.ps1
 skills/Playwright/x-post-simple.js
 tmp/
 nul
+.playwright-cli/
+.cdp-state.json

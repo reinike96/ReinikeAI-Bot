@@ -1,13 +1,3 @@
-function Convert-ToPowerShellSingleQuotedLiteral {
-    param([string]$Value)
-
-    if ($null -eq $Value) {
-        return "''"
-    }
-
-    return "'" + $Value.Replace("'", "''") + "'"
-}
-
 function Get-ButtonCallbackData {
     param([object]$Button)
 

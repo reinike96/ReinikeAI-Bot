@@ -560,7 +560,7 @@ function Get-OpenCodeServerProcessIds {
             }
         }
     }
-    catch {}
+    catch { Write-DailyLog -message "Get-OpenCodeServerProcessIds: Failed to enumerate processes via netstat" -type "WARN" }
 
     try {
         $matchedProcesses = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
@@ -578,7 +578,7 @@ function Get-OpenCodeServerProcessIds {
             }
         }
     }
-    catch {}
+    catch { Write-DailyLog -message "Get-OpenCodeServerProcessIds: Failed to enumerate processes via WMI" -type "WARN" }
 
     return @($pidMap.Values | Sort-Object -Descending)
 }
@@ -599,23 +599,23 @@ function Stop-OpenCodeServer {
                 try {
                     Update-TaskCheckpointState -CheckpointPath $jobRecord.CheckpointPath -TaskText $jobRecord.Task -Status "interrupted" -LastAction "OpenCode task stopped by orchestrator" -LastError $Reason
                 }
-                catch {}
+                catch { Write-DailyLog -message "Stop-OpenCodeServer: Failed to update checkpoint for job $($jobRecord.Job.Id)" -type "WARN" }
             }
             try {
                 Stop-Job -Job $jobRecord.Job -ErrorAction SilentlyContinue | Out-Null
                 Remove-Job -Job $jobRecord.Job -Force -ErrorAction SilentlyContinue
                 $stoppedJobIds += $jobRecord.Job.Id
             }
-            catch {}
+            catch { Write-DailyLog -message "Stop-OpenCodeServer: Failed to stop job $($jobRecord.Job.Id)" -type "WARN" }
 
             try {
                 Remove-ActiveJobById -JobId $jobRecord.Job.Id
             }
-            catch {}
+            catch { Write-DailyLog -message "Stop-OpenCodeServer: Failed to remove job $($jobRecord.Job.Id) from active list" -type "WARN" }
         }
 
         if (Get-Command Write-JobsFile -ErrorAction SilentlyContinue) {
-            try { Write-JobsFile } catch {}
+            try { Write-JobsFile } catch { Write-DailyLog -message "Stop-OpenCodeServer: Failed to write jobs file" -type "WARN" }
         }
     }
 
@@ -624,7 +624,7 @@ function Stop-OpenCodeServer {
             Stop-Job -Job $threadJob -ErrorAction SilentlyContinue | Out-Null
             Remove-Job -Job $threadJob -Force -ErrorAction SilentlyContinue
         }
-        catch {}
+        catch { Write-DailyLog -message "Stop-OpenCodeServer: Failed to stop thread job" -type "WARN" }
     }
 
     foreach ($processId in @(Get-OpenCodeServerProcessIds -BotConfig $BotConfig)) {
@@ -635,7 +635,7 @@ function Stop-OpenCodeServer {
                 $killedProcessIds += $processId
             }
         }
-        catch {}
+        catch { Write-DailyLog -message "Stop-OpenCodeServer: Failed to kill process $processId" -type "WARN" }
     }
 
     Start-Sleep -Milliseconds 300
@@ -643,7 +643,7 @@ function Stop-OpenCodeServer {
 
     if (Get-Command Write-DailyLog -ErrorAction SilentlyContinue) {
         $logMsg = "Stop-OpenCodeServer reason='$Reason' stopped_jobs=$($stoppedJobIds.Count) killed_processes=$($killedProcessIds.Count) remaining_processes=$($remainingProcesses.Count)"
-        try { Write-DailyLog -message $logMsg -type "SYSTEM" } catch {}
+        try { Write-DailyLog -message $logMsg -type "SYSTEM" } catch { Write-Host "Failed to log: $logMsg" }
     }
 
     return [PSCustomObject]@{
@@ -949,6 +949,11 @@ function New-OpenCodeRuntimeTaskPrompt {
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add("Working directory: $WorkDir") | Out-Null
     $lines.Add("Output directory: $OutputDir") | Out-Null
+    $lines.Add("FILE OUTPUT RULE: Save ALL generated files (scripts, images, reports, exports, downloads, etc.) to the Output directory ($OutputDir) unless the user explicitly requests a different path. Do NOT create files in the Working directory root or any other location.") | Out-Null
+    $lines.Add("ERROR JOURNAL RULE: When you encounter any difficulty, error, failed approach, or unexpected behavior (even if you eventually succeed), append an entry to the error journal file: $OutputDir/opencode-learnings.json") | Out-Null
+    $lines.Add("Each journal entry must be a single-line JSON object appended to the file (one JSON object per line, NDJSON format):") | Out-Null
+    $lines.Add('{ "timestamp": "ISO-8601", "task": "brief task", "error": "what went wrong", "attempted": "what you tried", "resolution": "how you fixed it or unresolved", "suggestion": "rule to prevent this in future" }') | Out-Null
+    $lines.Add("Examples of things to journal: tool not found in PATH, command failed due to missing dependency, API returned unexpected format, file not found where expected, permission denied, timeout, any retry needed, wrong assumption about environment.") | Out-Null
     $lines.Add("Checkpoint file: $CheckpointPath") | Out-Null
     if (-not [string]::IsNullOrWhiteSpace($SessionDiagnosticsPath)) {
         $lines.Add("Session diagnostics file: $SessionDiagnosticsPath") | Out-Null
@@ -960,6 +965,7 @@ function New-OpenCodeRuntimeTaskPrompt {
         $lines.Add("Diagnostics rule: append short bullet lines to the Progress Log in the diagnostics file whenever you hit a blocker, retry a failed path, change strategy, or complete a milestone. Be concrete, not generic.") | Out-Null
     }
     $lines.Add("Loop guard: if the same command, tool, or strategy fails twice, do not keep retrying that path. Either switch to a materially different approach once, or stop with [CANNOT_COMPLETE: concise reason].") | Out-Null
+    $lines.Add("FAIL-FAST RULE: Before attempting any work, check your available tools. If the task REQUIRES a tool you do not have (Playwright, Excel MCP, file-converter, computer-control, Word MCP), do NOT improvise. Return [TOOLS_MISSING] with MissingTool, Task, and Reason fields immediately. This lets the orchestrator re-route you.") | Out-Null
     if ($AllowParallelPlan) {
         $lines.Add("Parallel rule: if the task clearly splits into 2-4 independent non-interactive branches that should run concurrently, do not simulate parallelism yourself. Return exactly [ORCHESTRATOR_PARALLEL_PLAN] JSON [/ORCHESTRATOR_PARALLEL_PLAN] with fields strategy, merge_task, and tasks[]. Each task needs title, route, and task. Use only routes build, browser, docs, sheets, computer, or social.") | Out-Null
     }
@@ -1006,14 +1012,14 @@ function Start-OpenCodeJob {
 
     if ($transport -ne "http") {
         $heartbeatId = [Guid]::NewGuid().ToString("N")
-        $heartbeatPath = Join-Path $workDir "heartbeat_$heartbeatId.json"
+        $heartbeatPath = Join-Path $workDir "archives\heartbeat_$heartbeatId.json"
         $cliModel = if ([string]::IsNullOrWhiteSpace($requestedModel)) { "" } else { $requestedModel.Trim() }
         $jobScript = {
             param($taskDescription, $runtimeTaskPrompt, $workDir, $archivesDir, $heartbeatPath, $enableMCPs, $modelStr, $agentStr, $timeoutSeconds, $openCodeCommand, $openCodeApiKey, $checkpointPath, $checkpointPrompt, $sessionDiagnosticsPath)
             Add-Type -AssemblyName System.Net.Http
             function Write-DailyLog {
                 param([string]$message, [string]$type = "INFO")
-                $logFile = "$workDir\subagent_events.log"
+                $logFile = "$workDir\archives\subagent_events.log"
                 $currentDate = Get-Date -Format "yyyy-MM-dd"
                 $timestamp = Get-Date -Format "HH:mm:ss"
                 if (Test-Path $logFile) {
@@ -1080,6 +1086,8 @@ function Start-OpenCodeJob {
                 } catch { return $null }
             }
 
+            # NOTE: This function is duplicated from line 200 because PowerShell jobs run in a separate process
+            # and cannot access functions from the parent script. This is intentional.
             function Get-OpenCodeUsagePayloadFromExport {
                 param([object]$ExportData)
                 if ($null -eq $ExportData -or $null -eq $ExportData.messages) { return $null }
@@ -1319,7 +1327,7 @@ function Start-OpenCodeJob {
 
         function Write-Heartbeat {
             param($jobId, $status)
-            $heartbeatFile = "$workDir\heartbeat_$jobId.json"
+            $heartbeatFile = "$workDir\archives\heartbeat_$jobId.json"
             @{ jobId = $jobId; timestamp = (Get-Date).ToString("o"); status = $status } | ConvertTo-Json -Compress | Set-Content $heartbeatFile -Encoding UTF8
         }
 
@@ -1492,7 +1500,7 @@ function Start-OpenCodeJob {
             return "[ERROR_OPENCODE] $($_.Exception.Message)"
         }
         finally {
-            $heartbeatFile = "$workDir\heartbeat_$jobId.json"
+            $heartbeatFile = "$workDir\archives\heartbeat_$jobId.json"
             if (Test-Path $heartbeatFile) { Remove-Item $heartbeatFile -Force -ErrorAction SilentlyContinue }
         }
     }
