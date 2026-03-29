@@ -76,7 +76,7 @@ try {
     $postTask = $httpClient.PostAsync($uri, $content)
     $postTask.Wait()
     if ($postTask.Result.IsSuccessStatusCode) {
-        Write-Host "File sent successfully: $fileName" -ForegroundColor Green
+        Write-Host "[FILE_SENT] $fileName" -ForegroundColor Green
         if ($Caption) {
             Write-Host "Caption: $Caption" -ForegroundColor Cyan
         }

@@ -25,9 +25,7 @@ function Get-CommandRiskProfile {
         @{ Pattern = '(?i)\b(start-process)\b'; Reason = "Launches a new process"; Level = "confirm" }
         @{ Pattern = '(?i)skills\\Cron_Tasks\\Register-ScheduledAutomation\.ps1'; Reason = "Creates or updates a scheduled task"; Level = "confirm" }
         @{ Pattern = '(?i)skills\\Cron_Tasks\\Remove-ScheduledAutomation\.ps1'; Reason = "Removes a scheduled task"; Level = "confirm" }
-        @{ Pattern = '(?i)skills\\Telegram_Sender\\Send-TelegramFile\.ps1'; Reason = "Sends a file to Telegram"; Level = "confirm" }
-        @{ Pattern = '(?i)skills\\Telegram_Sender\\SendFile\.ps1'; Reason = "Sends a file to Telegram"; Level = "confirm" }
-        @{ Pattern = '(?i)skills\\Telegram_Sender\\send_file\.ps1'; Reason = "Sends a file to Telegram"; Level = "confirm" }
+
     )
 
     foreach ($rule in $patterns) {

@@ -1709,6 +1709,18 @@ function Complete-ActiveJobs {
             }
 
             $emojiCheck = [char]::ConvertFromUtf32(0x2705)
+            
+            # Check if this is a file sent notification - update status and suppress LLM response
+            if ($subRes -match '\[FILE_SENT\]\s*(.+?)\s*$') {
+                $sentFileName = $Matches[1].Trim()
+                $fileSentStatus = "$emojiCheck *File sent:* $sentFileName"
+                Update-TelegramStatus -job $j -text $fileSentStatus
+                Write-DailyLog -message "Job $($j.Job.Id) was a file send - updated status and suppressing LLM response" -type "JOB"
+                Remove-ActiveJobById -JobId $j.Job.Id
+                Write-JobsFile
+                continue
+            }
+            
             $completionStatus = if ($j.Type -eq "LocalCommand" -and $otherRunningLocalCommands -gt 0) {
                 "$emojiCheck *Task completed* ($($j.Type)). Waiting for remaining commands..."
             }

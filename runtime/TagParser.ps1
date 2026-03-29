@@ -206,11 +206,24 @@ function Convert-InlineStructuredActions {
         return $null
     }
 
+    # Check if we found a JSON with "actions" - if so, only process that and ignore legacy tags
+    $hasActionsJson = $false
+    foreach ($m in $candidateMatches) {
+        if ($m.Value -match '(?is)"actions"\s*:\s*\[') {
+            $hasActionsJson = $true
+            break
+        }
+    }
+
     $lastPos = 0
     foreach ($match in ($candidateMatches | Sort-Object Index -Unique)) {
         if ($match.Index -gt $lastPos) {
             $textChunk = $Response.Substring($lastPos, $match.Index - $lastPos)
-            if (-not [string]::IsNullOrWhiteSpace($textChunk)) {
+            # Skip text chunks that contain legacy CMD tags if we have a JSON with actions
+            if ($hasActionsJson -and $textChunk -match '\[CMD:') {
+                # Skip this text chunk, it's a legacy tag that we should ignore
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($textChunk)) {
                 $items += [PSCustomObject]@{
                     Kind    = "text"
                     Content = $textChunk
@@ -223,6 +236,10 @@ function Convert-InlineStructuredActions {
             $structuredItems = Convert-StructuredPayloadObjectToItems -Payload $candidatePayload -Raw $match.Value
             if ($null -ne $structuredItems) {
                 $items += @($structuredItems)
+                # If this JSON has actions, return immediately to avoid processing legacy tags
+                if ($hasActionsJson -and $candidatePayload.PSObject.Properties["actions"]) {
+                    return @($items)
+                }
             }
             else {
                 $actionType = if ($candidatePayload.PSObject.Properties["type"]) { "$($candidatePayload.type)".ToUpperInvariant() } else { "" }
@@ -262,6 +279,11 @@ function Convert-InlineStructuredActions {
         }
 
         $lastPos = $match.Index + $match.Length
+    }
+
+    # Skip tail processing if we have a JSON with actions (to avoid legacy tags)
+    if ($hasActionsJson) {
+        return @($items)
     }
 
     if ($lastPos -lt $Response.Length) {

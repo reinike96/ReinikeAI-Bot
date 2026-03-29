@@ -48,6 +48,11 @@ When adding a new skill, classify it before documenting it here.
 - Scripts:
   - `.\skills\Telegram_Sender\SendMessage.ps1`
   - `.\skills\Telegram_Sender\SendFile.ps1`
+- Usage:
+  - Send file: `powershell -File ".\skills\Telegram_Sender\SendFile.ps1" -FilePath "C:\path\to\file.txt"`
+  - Send file with caption: `powershell -File ".\skills\Telegram_Sender\SendFile.ps1" -FilePath "C:\path\to\file.txt" -Caption "Description"`
+  - Send message: `powershell -File ".\skills\Telegram_Sender\SendMessage.ps1" -Text "Message text"`
+- IMPORTANT: Always use `powershell -File` with the full script path. Never use `powershell -Command` with a function name.
 
 ## OpenCode Tools
 

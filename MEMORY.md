@@ -5,7 +5,7 @@
 	1. DuckSearch
 	2. Telegram_Sender
 	- File delivery script path: `.\skills\Telegram_Sender\SendFile.ps1`
-	- Compatibility alias: `.\skills\Telegram_Sender\send_file.ps1`
+	- Compatibility aliases: `.\skills\Telegram_Sender\send_file.ps1`, `.\skills\Telegram_Sender\Send-TelegramFile.ps1`
 	3. OpenCode-Status
 	4. System_Diagnostics
 	5. File_Tools
