@@ -21,7 +21,7 @@
     },
     "agent": {
         "build": {
-            "model": "opencode/mimo-v2-pro-free",
+            "model": "opencode/glm-5",
             "variant": "high",
             "tools": {
                 "playwright_browser_*": false,
@@ -33,13 +33,14 @@
             }
         },
         "browser": {
-            "model": "opencode/mimo-v2-pro-free",
+            "model": "opencode/glm-5",
             "variant": "high",
             "tools": {
                 "playwright_browser_*": true
             }
         },
         "docs": {
+            "model": "opencode/glm-5",
             "tools": {
                 "playwright_browser_*": false,
                 "file_converter_*": false,
@@ -47,19 +48,21 @@
             }
         },
         "sheets": {
+            "model": "opencode/glm-5",
             "tools": {
                 "playwright_browser_*": false,
                 "excel_master_*": false
             }
         },
         "computer": {
+            "model": "opencode/glm-5",
             "tools": {
                 "playwright_browser_*": false,
                 "computer_control_*": false
             }
         },
         "social": {
-            "model": "opencode/mimo-v2-pro-free",
+            "model": "opencode/glm-5",
             "variant": "high",
             "tools": {
                 "playwright_browser_*": true,

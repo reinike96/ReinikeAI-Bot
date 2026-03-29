@@ -156,6 +156,11 @@ function Invoke-TelegramCallbackRoute {
 
     if (-not (Test-TelegramActorAuthorized -BotConfig $BotConfig -ChatId "$chatId" -UserId "$userId")) {
         Write-DailyLog -message "Unauthorized callback ignored for chat=$chatId user=$userId" -type "SECURITY"
+        # Auto-leave unauthorized chats to clean up old groups/channels
+        $left = Invoke-TelegramLeaveChat -ChatId "$chatId"
+        if ($left) {
+            Write-DailyLog -message "Automatically left unauthorized chat=$chatId" -type "SYSTEM"
+        }
         try { Answer-TelegramCallback -callbackQueryId $callbackId -text "Unauthorized" } catch {}
         return
     }
@@ -313,6 +318,11 @@ function Invoke-TelegramMessageRoute {
 
     if (-not (Test-TelegramActorAuthorized -BotConfig $BotConfig -ChatId "$chatId" -UserId "$userId")) {
         Write-DailyLog -message "Unauthorized message ignored for chat=$chatId user=$userId" -type "SECURITY"
+        # Auto-leave unauthorized chats to clean up old groups/channels
+        $left = Invoke-TelegramLeaveChat -ChatId "$chatId"
+        if ($left) {
+            Write-DailyLog -message "Automatically left unauthorized chat=$chatId" -type "SYSTEM"
+        }
         return
     }
 

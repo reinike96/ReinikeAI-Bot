@@ -67,7 +67,7 @@ Each `tasks[]` item must include `title`, `route`, and `task`. The orchestrator 
 - Lightweight page screenshot: `[PW_SCREENSHOT: url]`
 - View top processes: `[CMD: Get-Process | sort CPU -Desc | select -First 5]`
 - Windows GUI automation: `[CMD: powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "Open Notepad and type hello"]`
-- Default local file folder: `C:\Users\ALEXR\OneDrive\Desktop\ReinikeAI Bot\archives`
+- Default local file folder: `./archives` (relative to the bot installation directory)
 
 When the user refers to "the folder" without naming a path, interpret it as the `archives` directory above.
 For transcript lookups, file reads, generated outputs, downloads, and local file searches, start in that `archives` directory unless the user explicitly requests another path.

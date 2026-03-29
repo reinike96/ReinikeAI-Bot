@@ -950,10 +950,6 @@ function New-OpenCodeRuntimeTaskPrompt {
     $lines.Add("Working directory: $WorkDir") | Out-Null
     $lines.Add("Output directory: $OutputDir") | Out-Null
     $lines.Add("FILE OUTPUT RULE: Save ALL generated files (scripts, images, reports, exports, downloads, etc.) to the Output directory ($OutputDir) unless the user explicitly requests a different path. Do NOT create files in the Working directory root or any other location.") | Out-Null
-    $lines.Add("ERROR JOURNAL RULE: When you encounter any difficulty, error, failed approach, or unexpected behavior (even if you eventually succeed), append an entry to the error journal file: $OutputDir/opencode-learnings.json") | Out-Null
-    $lines.Add("Each journal entry must be a single-line JSON object appended to the file (one JSON object per line, NDJSON format):") | Out-Null
-    $lines.Add('{ "timestamp": "ISO-8601", "task": "brief task", "error": "what went wrong", "attempted": "what you tried", "resolution": "how you fixed it or unresolved", "suggestion": "rule to prevent this in future" }') | Out-Null
-    $lines.Add("Examples of things to journal: tool not found in PATH, command failed due to missing dependency, API returned unexpected format, file not found where expected, permission denied, timeout, any retry needed, wrong assumption about environment.") | Out-Null
     $lines.Add("Checkpoint file: $CheckpointPath") | Out-Null
     if (-not [string]::IsNullOrWhiteSpace($SessionDiagnosticsPath)) {
         $lines.Add("Session diagnostics file: $SessionDiagnosticsPath") | Out-Null

@@ -229,3 +229,18 @@ function Send-TelegramTyping {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($jsonPayload)
     try { Invoke-RestMethod -Uri "$apiUrl/sendChatAction" -Method Post -ContentType "application/json; charset=utf-8" -Body $bytes -ErrorAction SilentlyContinue | Out-Null } catch {}
 }
+
+function Invoke-TelegramLeaveChat {
+    param([string]$ChatId)
+    $payload = @{ chat_id = $ChatId }
+    $jsonPayload = $payload | ConvertTo-Json -Compress
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($jsonPayload)
+    try {
+        $result = Invoke-RestMethod -Uri "$apiUrl/leaveChat" -Method Post -ContentType "application/json; charset=utf-8" -Body $bytes -ErrorAction Stop
+        return $result.ok
+    }
+    catch {
+        Write-DailyLog -message "Failed to leave chat $ChatId : $_" -type "WARN"
+        return $false
+    }
+}

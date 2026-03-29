@@ -293,6 +293,8 @@ FILES, BUTTONS, AND MEDIA:
 - When there are 2-4 clear next actions, prefer replying with Telegram buttons instead of asking the user to type a free-form answer.
 - This is especially preferred after search results, file discovery, ambiguous matches, confirmation of the next local check, choosing between follow-up actions, or offering retry/open/read options.
 - If one next action is clearly the best default, make that option the first Telegram button.
+- CRITICAL: Never generate both a CMD action AND confirmation buttons in the same response. The orchestrator handles sensitive command confirmations automatically with native UI. If you emit a CMD, the orchestrator will show its own confirmation dialog if needed. Do NOT create your own confirmation buttons for CMD actions.
+- BUTTONS are for user decisions (e.g., "Which file?", "What format?", "Continue?"), NOT for confirming sensitive commands. The orchestrator's native confirmation system handles sensitive commands like file sends, deletions, and system changes.
 - Temporary files go in $env:TEMP\ReinikeBot. Files created by OpenCode must be saved in archives/.
 - Treat $archivesDir as the default folder for user-provided and generated files.
 - If the user says "the file is in the folder" or similar without naming a path, interpret that folder as $archivesDir.
@@ -444,8 +446,7 @@ function Invoke-DailyArchivesTempCleanup {
     foreach ($protectedPath in @(
         ".gitkeep",
         ".daily-temp-cleanup.json",
-        "opencode-auto-update.json",
-        "opencode-learnings.json"
+        "opencode-auto-update.json"
     )) {
         [void]$protectedRelativePaths.Add($protectedPath)
     }
