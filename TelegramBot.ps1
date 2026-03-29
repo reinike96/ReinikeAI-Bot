@@ -244,7 +244,6 @@ VERIFICATION:
 TOOLS:
 - OpenCode task format: [OPENCODE: chat | task]. Default route is build. Let OpenCode decide whether it needs browser/docs/sheets/computer/social sub-agents internally.
 - Direct helpers available: [CMD: ...], [SCREENSHOT], [PW_CONTENT: url], [PW_SCREENSHOT: url].
-- Windows desktop GUI control uses [CMD: powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "..."].
 - Default user file folder: $archivesDir
 - Unless the user explicitly names another path, assume local files the user mentions are most likely in $archivesDir and start there first for file searches, reads, transcript lookups, download inspection, and generated-file checks.
 - If the first check in $archivesDir is insufficient, you may expand to other relevant repo paths or broader local paths, but only as needed.
@@ -264,15 +263,7 @@ BROWSER AND WEB RULES:
 OUTLOOK:
 - Outlook desktop workflows should go through OpenCode plus the local Outlook scripts/COM automation, not browser automation, unless the user explicitly asked for webmail/browser.
 
-DESKTOP CONTROL:
-- Windows-Use is for explicit bounded desktop GUI actions. Keep tasks narrow, expect a confirmation flow, prefer one complete task when possible, and preserve exact requested text when entering text.
-- For broader or riskier mixed workflows, prefer OpenCode computer control instead of chaining multiple Windows-Use commands.
-
 REQUIRED FALLBACK MARKERS:
-- If OpenCode needs the local Windows-Use skill, it must stop and return exactly:
-[WINDOWS_USE_FALLBACK_REQUIRED]
-Task: <single-line bounded Windows-Use task for the local orchestrator>
-Reason: <brief reason>
 - If a logged-in website workflow reaches a login wall, OpenCode must stop and return exactly:
 [LOGIN_REQUIRED]
 Site: <site name>
@@ -499,6 +490,35 @@ function Invoke-DailyArchivesTempCleanup {
             }
         }
         catch {}
+    }
+
+    # --- Clean up Playwright CLI logs ---
+    $playwrightCliDir = Join-Path $scriptRoot ".playwright-cli"
+    if (Test-Path $playwrightCliDir) {
+        foreach ($item in @(Get-ChildItem -Path $playwrightCliDir -File -ErrorAction SilentlyContinue)) {
+            if ($item.LastWriteTime -lt $cutoff) {
+                try {
+                    Remove-Item -Path $item.FullName -Force -ErrorAction Stop
+                    $deletedCount++
+                }
+                catch {}
+            }
+        }
+    }
+
+    # --- Clean up session diagnostics (keep last 7 days) ---
+    $sessionDiagnosticsDir = Join-Path $ArchivesDir "session-diagnostics"
+    if (Test-Path $sessionDiagnosticsDir) {
+        $diagnosticsCutoff = (Get-Date).AddDays(-7)
+        foreach ($item in @(Get-ChildItem -Path $sessionDiagnosticsDir -File -ErrorAction SilentlyContinue)) {
+            if ($item.LastWriteTime -lt $diagnosticsCutoff) {
+                try {
+                    Remove-Item -Path $item.FullName -Force -ErrorAction Stop
+                    $deletedCount++
+                }
+                catch {}
+            }
+        }
     }
 
     @{ lastRunDate = $todayKey; deletedCount = $deletedCount; updatedAt = (Get-Date).ToString("o") } |

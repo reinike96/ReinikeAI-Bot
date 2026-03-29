@@ -33,14 +33,6 @@ When adding a new skill, classify it before documenting it here.
   - `.\skills\Outlook\delete-emails.ps1`
   - `.\skills\Outlook\list-folders.ps1`
 
-## Windows-Use
-
-- Purpose: bounded Windows GUI automation with the Python `windows-use` agent
-- Classification: `hybrid`
-- Restricted: prefer explicit, bounded desktop tasks and require confirmation before execution
-- Script: `.\skills\Windows_Use\Invoke-WindowsUse.ps1`
-- Usage: `powershell -File ".\skills\Windows_Use\Invoke-WindowsUse.ps1" -Task "Open Notepad and type hello"`
-
 ## Telegram Sender
 
 - Purpose: send Telegram messages and files
@@ -100,7 +92,7 @@ When adding a new skill, classify it before documenting it here.
 - Mandatory rule: use this wrapper only when the orchestrator itself needs a direct local browser helper for a simple action
 - Script: `.\skills\Playwright\playwright-nav.ps1`
 - Usage: `powershell -File ".\skills\Playwright\playwright-nav.ps1" -Action [Screenshot|GetContent|SearchGoogle|Download] -Url "URL" [-Out "PATH"]`
-- OpenCode note: the OpenCode-side Playwright skill is separate from this local wrapper, but logged-in multi-step browser workflows may also use local Playwright helpers/scripts in this repo and should not jump to Windows-Use unless browser automation hits a concrete blocker
+- OpenCode note: the OpenCode-side Playwright skill is separate from this local wrapper, but logged-in multi-step browser workflows may also use local Playwright helpers/scripts in this repo
 - Interactive draft helpers:
   - `.\skills\Playwright\Invoke-LinkedInDraft.ps1`
   - `.\skills\Playwright\Invoke-XDraft.ps1`

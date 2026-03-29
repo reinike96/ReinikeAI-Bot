@@ -4,7 +4,15 @@ param(
     [string]$TaskText = "",
 
     [Parameter(Mandatory = $false)]
-    [string]$TaskFile = ""
+    [string]$TaskFile = "",
+
+    [Parameter(Mandatory = $false)]
+    [Alias("NoPublish", "DraftOnlyMode")]
+    [switch]$DraftOnly,
+
+    [Parameter(Mandatory = $false)]
+    [Alias("Publish", "ClickPost")]
+    [switch]$PublishOnly
 )
 
 $scriptDir = Split-Path $MyInvocation.MyCommand.Path -Parent
@@ -96,6 +104,42 @@ function Get-XDraftMode {
     return "single"
 }
 
+function Test-RequiresDraftOnly {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $false
+    }
+
+    $normalized = $Text.ToLowerInvariant()
+    $draftOnlyPatterns = @(
+        'no publiques',
+        'do not publish',
+        'don''t publish',
+        'do not click.*publish',
+        'don''t click.*publish',
+        'leave.*post button visible',
+        'deja.*botón.*post.*visible',
+        'solo devuelve.*texto.*revisión',
+        'just return.*text.*review',
+        'awaiting.*confirmation',
+        'pending.*approval',
+        'draft only',
+        'solo draft',
+        'no hacer clic en publicar',
+        'no presiones.*publicar',
+        'publish_confirmation_required'
+    )
+
+    foreach ($pattern in $draftOnlyPatterns) {
+        if ($normalized -match $pattern) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Get-TextElementCount {
     param([string]$Text)
 
@@ -173,6 +217,30 @@ function Write-Utf8TextFile {
     [System.IO.File]::WriteAllText($Path, $Text, $utf8)
 }
 
+# If PublishOnly mode, just click the Post button on existing draft
+if ($PublishOnly) {
+    $archivesDir = $botConfig.Paths.ArchivesDir
+    New-Item -ItemType Directory -Force -Path $archivesDir | Out-Null
+    
+    $statePath = Join-Path $archivesDir "x-draft-state.json"
+    $screenshotPath = Join-Path $archivesDir "x-post-draft.png"
+    $nodeScript = Join-Path $scriptDir "x-post.js"
+    $nodeExe = Resolve-ExecutablePath -Candidates @("node.exe", "node")
+    
+    if (-not $nodeExe) {
+        throw "Node.js executable not found."
+    }
+    
+    $env:BOT_PROJECT_ROOT = $projectRoot
+    $env:BROWSER_DEBUG_PORT = "$($botConfig.Browser.DebugPort)"
+    
+    & $nodeExe $nodeScript --publish-only true --state $statePath --screenshot $screenshotPath --port "$($botConfig.Browser.DebugPort)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "X publish helper failed with exit code $LASTEXITCODE."
+    }
+    return
+}
+
 $effectiveTaskText = $TaskText
 if (-not [string]::IsNullOrWhiteSpace($TaskFile)) {
     if (-not (Test-Path $TaskFile)) {
@@ -195,6 +263,9 @@ if ([string]::IsNullOrWhiteSpace($postContent)) {
 }
 
 $draftMode = Get-XDraftMode -Text $effectiveTaskText
+$autoDraftOnly = Test-RequiresDraftOnly -Text $effectiveTaskText
+$effectiveDraftOnly = $DraftOnly -or $autoDraftOnly
+
 $characterCount = Get-TextElementCount -Text $postContent
 if ($draftMode -ne "thread" -and $characterCount -gt 280) {
     throw "X post content is $characterCount characters long. A single X post must be 280 characters or fewer. Ask for a shorter post or explicitly request a thread."
@@ -223,9 +294,15 @@ $env:BROWSER_TIMEZONE = $botConfig.Browser.Timezone
 $env:BROWSER_DEBUG_PORT = "$($botConfig.Browser.DebugPort)"
 $env:BROWSER_KEEP_OPEN = if ([bool]$botConfig.Browser.KeepOpen) { "true" } else { "false" }
 $env:X_DRAFT_MODE = $draftMode
+$env:X_NO_PUBLISH = if ($effectiveDraftOnly) { "true" } else { "false" }
 $env:BOT_PROJECT_ROOT = $projectRoot
 
-& $nodeExe $nodeScript --content $contentPath --state $statePath --screenshot $screenshotPath --port "$($botConfig.Browser.DebugPort)"
+$nodeArgs = @($nodeScript, "--content", $contentPath, "--state", $statePath, "--screenshot", $screenshotPath, "--port", "$($botConfig.Browser.DebugPort)")
+if ($effectiveDraftOnly) {
+    $nodeArgs += @("--no-publish", "true")
+}
+
+& $nodeExe $nodeArgs
 if ($LASTEXITCODE -ne 0) {
     throw "X draft helper failed with exit code $LASTEXITCODE."
 }

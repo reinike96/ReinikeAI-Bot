@@ -1,6 +1,9 @@
 param(
     [Parameter(Mandatory = $false)]
-    [string]$StartUrl = "about:blank"
+    [string]$StartUrl = "about:blank",
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$Headless
 )
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -66,6 +69,10 @@ $args = @(
     "--new-window"
 )
 
+if ($Headless) {
+    $args += "--headless=new"
+}
+
 if (-not [string]::IsNullOrWhiteSpace($launchProfile.ProfileDirectory)) {
     $args += "--profile-directory=""$($launchProfile.ProfileDirectory)"""
 }
@@ -75,5 +82,10 @@ if (-not [string]::IsNullOrWhiteSpace($StartUrl)) {
 }
 
 Start-Process -FilePath $chromeExecutable -ArgumentList ($args -join ' ') | Out-Null
-Write-Host "[BotChrome] Chrome launched with remote debugging on port $debugPort." -ForegroundColor Green
+
+if ($Headless) {
+    Write-Host "[BotChrome] Chrome launched in HEADLESS mode with remote debugging on port $debugPort." -ForegroundColor Yellow
+} else {
+    Write-Host "[BotChrome] Chrome launched with remote debugging on port $debugPort." -ForegroundColor Green
+}
 Write-Host "[BotChrome] Profile: $($botConfig.Browser.ChromeProfileDir)" -ForegroundColor Cyan

@@ -466,9 +466,6 @@ function Stop-UntrackedAutomationProcesses {
     )
 
     $patterns = @(
-        'windows_use_runner\.py',
-        'Invoke-WindowsUse\.ps1',
-        'windows-use-venv\\Scripts\\python\.exe',
         '\bopencode\b',
         'OpenCode'
     )

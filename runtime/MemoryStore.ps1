@@ -33,7 +33,6 @@ function Compress-TaskCompletionResult {
 
     $anchors = @(
         "[publish_confirmation_required]",
-        "[windows_use_fallback_required]",
         "[login_required]",
         "[draft_ready]",
         "[posted]",
@@ -155,13 +154,6 @@ function New-TaskCompletionMemorySummary {
     }
     elseif ($result -match '(?s)\[PUBLISH_CONFIRMATION_REQUIRED\]\s*Site:\s*(?<site>[^\r\n]+)\s*Task:\s*(?<task>[^\r\n]+)(?:\s*Reason:\s*(?<reason>[^\r\n]+))?') {
         $summaryLines += "State: Final publish confirmation required on $($Matches.site.Trim())."
-        $summaryLines += "Pending action: $($Matches.task.Trim())"
-        if (-not [string]::IsNullOrWhiteSpace($Matches.reason)) {
-            $summaryLines += "Reason: $($Matches.reason.Trim())"
-        }
-    }
-    elseif ($result -match '(?s)\[WINDOWS_USE_FALLBACK_REQUIRED\]\s*Task:\s*(?<task>[^\r\n]+)\s*Reason:\s*(?<reason>[^\r\n]+)') {
-        $summaryLines += "State: Windows desktop control fallback required."
         $summaryLines += "Pending action: $($Matches.task.Trim())"
         if (-not [string]::IsNullOrWhiteSpace($Matches.reason)) {
             $summaryLines += "Reason: $($Matches.reason.Trim())"

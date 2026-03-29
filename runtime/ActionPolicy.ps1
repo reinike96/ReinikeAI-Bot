@@ -20,7 +20,6 @@ function Get-CommandRiskProfile {
         @{ Pattern = '(?i)\b(reg add|reg delete|set-itemproperty|new-itemproperty|remove-itemproperty)\b'; Reason = "Modifies registry or system settings"; Level = "block" }
         @{ Pattern = '(?i)skills\\Outlook\\(delete|clean-spam|delete-suspected-spam)'; Reason = "Deletes Outlook data"; Level = "confirm" }
         @{ Pattern = '(?i)send-outlook-email\.ps1'; Reason = "Sends email from Outlook"; Level = "confirm" }
-        @{ Pattern = '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1'; Reason = "Controls the live Windows desktop through Windows-Use"; Level = "confirm" }
         @{ Pattern = '(?i)\b(invoke-webrequest|curl|wget)\b'; Reason = "Downloads or posts data over the network"; Level = "confirm" }
         @{ Pattern = '(?i)\b(start-process)\b'; Reason = "Launches a new process"; Level = "confirm" }
         @{ Pattern = '(?i)skills\\Cron_Tasks\\Register-ScheduledAutomation\.ps1'; Reason = "Creates or updates a scheduled task"; Level = "confirm" }

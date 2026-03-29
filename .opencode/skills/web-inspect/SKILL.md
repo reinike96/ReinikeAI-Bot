@@ -10,7 +10,7 @@ Use this skill when you already know a page URL and need structured signals befo
 ## Command
 
 ```bash
-node .agents/skills/web-inspect/scripts/inspect_url.js --url "https://example.com" --mode summary
+node .opencode/skills/web-inspect/scripts/inspect_url.js --url "https://example.com" --mode summary
 ```
 
 ## Modes
@@ -39,7 +39,7 @@ node .agents/skills/web-inspect/scripts/inspect_url.js --url "https://example.co
 Example second hop:
 
 ```bash
-node .agents/skills/web-inspect/scripts/inspect_url.js --url "https://example.com/path/data.js" --mode asset
+node .opencode/skills/web-inspect/scripts/inspect_url.js --url "https://example.com/path/data.js" --mode asset
 ```
 
 ## Rules

@@ -123,15 +123,6 @@
         "computer": {
             "model": "opencode/glm-5",
             "task_budget": 5,
-            "permission": {
-                "task": {
-                    "*": "deny"
-                },
-                "skill": {
-                    "Windows_Use": "allow",
-                    "*": "deny"
-                }
-            },
             "tools": {
                 "playwright_browser_*": false
             }
@@ -151,6 +142,81 @@
             "tools": {
                 "playwright_browser_*": true,
                 "playwriter_*": false
+            }
+        },
+        "academic-papers": {
+            "model": "opencode/glm-5",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
+            "tools": {
+                "playwright_browser_*": false
+            }
+        },
+        "stackoverflow": {
+            "model": "opencode/glm-5",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
+            "tools": {
+                "playwright_browser_*": false
+            }
+        },
+        "github-debug": {
+            "model": "opencode/glm-5",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
+            "tools": {
+                "playwright_browser_*": false
+            }
+        },
+        "general-web": {
+            "model": "opencode/glm-5",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
+            "tools": {
+                "playwright_browser_*": false
+            }
+        },
+        "chinese-tech": {
+            "model": "opencode/glm-5",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
+            "tools": {
+                "playwright_browser_*": false
             }
         }
     }

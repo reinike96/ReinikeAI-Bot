@@ -14,6 +14,7 @@ This project ships a project-level OpenCode agent layout so users can keep speci
   - intended MCP/skill set:
     - Playwright tools
     - stateful browser helpers
+    - youtube-transcript skill (extract transcripts from YouTube videos)
 
 - `docs`
   - use for PDF and Word work

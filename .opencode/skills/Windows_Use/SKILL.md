@@ -3,11 +3,29 @@ name: Windows_Use
 user-invocable: true
 allowed-tools: Bash, Read
 description: Automatización de escritorio Windows - abrir apps, clic, escribir, controlar ventanas.
+requires-confirmation: true
 ---
 
 # Windows-Use Skill
 
 Automatización de escritorio Windows mediante el paquete `windows-use`.
+
+## ⚠️ CONFIRMACIÓN REQUERIDA
+
+**Este skill requiere confirmación del usuario ANTES de ejecutarse.**
+
+El agente @computer debe:
+1. Explicar qué acción va a realizar
+2. Pedir permiso explícito
+3. Esperar confirmación antes de ejecutar
+
+El agente debe retornar:
+```
+[WINDOWS_USE_CONFIRMATION_REQUIRED]
+Task: <descripción de la acción>
+Reason: <por qué es necesaria>
+Risk: <riesgos potenciales>
+```
 
 ## Propósito
 

@@ -21,7 +21,6 @@ function Initialize-RuntimeState {
         ParallelOpenCodeGroups = @{}
         PendingChats           = @()
         PendingConfirmations   = @{}
-        WindowsUseApprovals    = @{}
         LastExecutedTags       = @{}
     }
 }
@@ -210,28 +209,6 @@ function Remove-PendingConfirmation {
     return $null
 }
 
-function Get-WindowsUseApprovals {
-    return (Get-RuntimeContext).WindowsUseApprovals
-}
-
-function Get-WindowsUseTaskTextFromCommand {
-    param([string]$Command)
-
-    if ([string]::IsNullOrWhiteSpace($Command)) {
-        return ""
-    }
-
-    if ($Command -match '-Task\s+"([^"]*)"') {
-        return "$($Matches[1])"
-    }
-
-    if ($Command -match "-Task\s+'([^']*)'") {
-        return "$($Matches[1])"
-    }
-
-    return ""
-}
-
 function Get-TextSimilarityTokens {
     param([string]$Text)
 
@@ -244,125 +221,6 @@ function Get-TextSimilarityTokens {
         (-not [string]::IsNullOrWhiteSpace($_)) -and (($_.Length -ge 3) -or ($_ -match '^\d+$'))
     })
     return @($tokens | Select-Object -Unique)
-}
-
-function Get-WindowsUseApprovalScopeTokens {
-    param([hashtable]$Approval)
-
-    if ($null -eq $Approval) {
-        return @()
-    }
-
-    $scopeParts = @()
-    if ($Approval.ContainsKey("ScopeText") -and -not [string]::IsNullOrWhiteSpace("$($Approval.ScopeText)")) {
-        $scopeParts += "$($Approval.ScopeText)"
-    }
-    if ($Approval.ContainsKey("Command")) {
-        $taskText = Get-WindowsUseTaskTextFromCommand -Command "$($Approval.Command)"
-        if (-not [string]::IsNullOrWhiteSpace($taskText)) {
-            $scopeParts += $taskText
-        }
-    }
-
-    $allTokens = @()
-    foreach ($part in $scopeParts) {
-        $allTokens += @(Get-TextSimilarityTokens -Text $part)
-    }
-    return @($allTokens | Select-Object -Unique)
-}
-
-function Set-WindowsUseApproval {
-    param(
-        [string]$ChatId,
-        [string]$UserId = "",
-        [string]$Command = "",
-        [string]$ScopeText = ""
-    )
-
-    if ([string]::IsNullOrWhiteSpace($ChatId)) {
-        return
-    }
-
-    (Get-WindowsUseApprovals)[$ChatId] = @{
-        ChatId = $ChatId
-        UserId = $UserId
-        Command = $Command
-        ScopeText = $ScopeText
-        GrantedAt = Get-Date
-    }
-}
-
-function Clear-WindowsUseApproval {
-    param([string]$ChatId)
-
-    if ([string]::IsNullOrWhiteSpace($ChatId)) {
-        return
-    }
-
-    $approvals = Get-WindowsUseApprovals
-    if ($approvals.ContainsKey($ChatId)) {
-        $approvals.Remove($ChatId) | Out-Null
-    }
-}
-
-function Test-WindowsUseApprovalActive {
-    param(
-        [string]$ChatId,
-        [string]$UserId = "",
-        [string]$Command = ""
-    )
-
-    if ([string]::IsNullOrWhiteSpace($ChatId)) {
-        return $false
-    }
-
-    $approvals = Get-WindowsUseApprovals
-    if (-not $approvals.ContainsKey($ChatId)) {
-        return $false
-    }
-
-    $approval = $approvals[$ChatId]
-    if ($null -eq $approval) {
-        return $false
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($UserId) -and -not [string]::IsNullOrWhiteSpace("$($approval.UserId)") -and "$($approval.UserId)" -ne "$UserId") {
-        return $false
-    }
-
-    $grantedAt = $approval.GrantedAt
-    if ($null -eq $grantedAt) {
-        return $false
-    }
-
-    if (((Get-Date) - $grantedAt).TotalMinutes -gt 15) {
-        Clear-WindowsUseApproval -ChatId $ChatId
-        return $false
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($Command)) {
-        $scopeTokens = @(Get-WindowsUseApprovalScopeTokens -Approval $approval)
-        $candidateTask = Get-WindowsUseTaskTextFromCommand -Command $Command
-        $candidateText = if ([string]::IsNullOrWhiteSpace($candidateTask)) { $Command } else { $candidateTask }
-        $candidateTokens = @(Get-TextSimilarityTokens -Text $candidateText)
-        $importantTokens = @($candidateTokens | Where-Object { ($_.Length -ge 4) -or ($_ -match '^\d+$') })
-
-        if ($importantTokens.Count -eq 0) {
-            $importantTokens = $candidateTokens
-        }
-
-        if ($importantTokens.Count -eq 0 -or $scopeTokens.Count -eq 0) {
-            return $false
-        }
-
-        $matches = @($importantTokens | Where-Object { $scopeTokens -contains $_ })
-        $coverage = $matches.Count / [double]$importantTokens.Count
-        if ($coverage -lt 0.72) {
-            return $false
-        }
-    }
-
-    return $true
 }
 
 function Reset-LastExecutedTags {

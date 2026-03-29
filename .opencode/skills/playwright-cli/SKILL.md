@@ -1,7 +1,7 @@
 ---
 name: playwright-cli
 description: Interactive browser automation with step-by-step commands. Use for clicking, typing, form filling, and multi-step workflows.
-allowed-tools: Bash(cdp-cli:*), Bash(playwright-cli:*)
+allowed-tools: Bash(cdp-cli:*), Bash(playwright-cli:*), Bash(playwright-nav:*)
 ---
 
 # CDP CLI — Interactive Browser Control
@@ -134,3 +134,15 @@ powershell -File ".\skills\Playwright\Invoke-LinkedInDraft.ps1" -TaskFile "task.
 # X.com
 powershell -File ".\skills\Playwright\Invoke-XDraft.ps1" -TaskFile "task.txt"
 ```
+
+---
+
+## When to Use What
+
+| Task Type | Tool |
+|-----------|------|
+| Screenshot, GetContent, Download | `playwright-nav.ps1` |
+| Search Google | `playwright-nav.ps1` |
+| Interactive form filling | `cdp-cli.js` |
+| Social media drafts | `Invoke-XDraft.ps1` / `Invoke-LinkedInDraft.ps1` |
+| Keep browser open for user | `playwright-nav.ps1 -Action KeepOpen` |

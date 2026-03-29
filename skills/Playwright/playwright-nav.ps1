@@ -7,7 +7,10 @@ param (
     [string]$Url,
 
     [Parameter(Mandatory = $false)]
-    [string]$Out
+    [string]$Out,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$Headless
 )
 
 $scriptDir = Split-Path $MyInvocation.MyCommand.Path -Parent
@@ -132,6 +135,9 @@ if ($Out) {
 }
 
 Write-Host "[Playwright] Executing $Action on $Url" -ForegroundColor Cyan
+if ($Headless) {
+    Write-Host "[Playwright] Running in HEADLESS mode" -ForegroundColor Yellow
+}
 
 $env:CHROME_EXECUTABLE = $botConfig.Browser.ChromeExecutable
 $env:CHROME_PROFILE_DIR = $botConfig.Browser.ChromeProfileDir
@@ -146,6 +152,8 @@ $env:BOT_PROJECT_ROOT = $projectRoot
 $nodeExe = Resolve-ExecutablePath -Candidates @("node.exe", "node")
 $pythonExe = Resolve-ExecutablePath -Candidates @("python.exe", "python", "py.exe", "py")
 
+$headlessArg = if ($Headless) { "true" } else { "false" }
+
 # Try JavaScript (Chromium with Chrome profile) first
 $jsScript = Join-Path $scriptDir "browser-helper.js"
 if (-not $nodeExe) {
@@ -153,10 +161,10 @@ if (-not $nodeExe) {
     $LASTEXITCODE = 1
 }
 elseif ($null -ne $Out) {
-    & $nodeExe "$jsScript" "$Action" "$Url" "$Out"
+    & $nodeExe "$jsScript" "$Action" "$Url" "$Out" "$headlessArg"
 }
 else {
-    & $nodeExe "$jsScript" "$Action" "$Url"
+    & $nodeExe "$jsScript" "$Action" "$Url" "" "$headlessArg"
 }
 
 # If failed, try Python (Stealth mode)
@@ -170,17 +178,17 @@ if ($LASTEXITCODE -ne 0) {
     }
     elseif ($pythonExe -like "*\\py.exe" -or $pythonExe -like "*\\py") {
         if ($null -ne $Out) {
-            & $pythonExe -3 "$pythonScript" "$Action" "$Url" "$Out"
+            & $pythonExe -3 "$pythonScript" "$Action" "$Url" "$Out" "$headlessArg"
         }
         else {
-            & $pythonExe -3 "$pythonScript" "$Action" "$Url"
+            & $pythonExe -3 "$pythonScript" "$Action" "$Url" "" "$headlessArg"
         }
     }
     elseif ($null -ne $Out) {
-        & $pythonExe "$pythonScript" "$Action" "$Url" "$Out"
+        & $pythonExe "$pythonScript" "$Action" "$Url" "$Out" "$headlessArg"
     }
     else {
-        & $pythonExe "$pythonScript" "$Action" "$Url"
+        & $pythonExe "$pythonScript" "$Action" "$Url" "" "$headlessArg"
     }
     
     if ($LASTEXITCODE -ne 0) {

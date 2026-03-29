@@ -1,26 +1,3 @@
-function Get-WindowsUseEscalationRequest {
-    param([string]$ResultText)
-
-    if ([string]::IsNullOrWhiteSpace($ResultText)) {
-        return $null
-    }
-
-    if ($ResultText -notmatch '(?s)\[WINDOWS_USE_FALLBACK_REQUIRED\]\s*Task:\s*(?<task>[^\r\n]+)\s*Reason:\s*(?<reason>[^\r\n]+)') {
-        return $null
-    }
-
-    $taskText = $Matches['task'].Trim()
-    $reasonText = $Matches['reason'].Trim()
-    if ([string]::IsNullOrWhiteSpace($taskText)) {
-        return $null
-    }
-
-    return [PSCustomObject]@{
-        Task = $taskText
-        Reason = $reasonText
-    }
-}
-
 function Get-LoginRequiredRequest {
     param([string]$ResultText)
 
@@ -41,6 +18,32 @@ function Get-LoginRequiredRequest {
     return [PSCustomObject]@{
         Site = $siteText
         Reason = $reasonText
+    }
+}
+
+function Get-WindowsUseConfirmationRequest {
+    param([string]$ResultText)
+
+    if ([string]::IsNullOrWhiteSpace($ResultText)) {
+        return $null
+    }
+
+    if ($ResultText -notmatch '(?s)\[WINDOWS_USE_CONFIRMATION_REQUIRED\]\s*Task:\s*(?<task>[^\r\n]+)\s*Reason:\s*(?<reason>[^\r\n]+)(?:\s*Risk:\s*(?<risk>[^\r\n]+))?') {
+        return $null
+    }
+
+    $taskText = $Matches['task'].Trim()
+    $reasonText = $Matches['reason'].Trim()
+    $riskText = if ($Matches['risk']) { $Matches['risk'].Trim() } else { "" }
+
+    if ([string]::IsNullOrWhiteSpace($taskText)) {
+        return $null
+    }
+
+    return [PSCustomObject]@{
+        Task = $taskText
+        Reason = $reasonText
+        Risk = $riskText
     }
 }
 
@@ -99,7 +102,6 @@ function Get-OrchestratorUsableResultText {
 
     $anchors = @(
         "[PUBLISH_CONFIRMATION_REQUIRED]",
-        "[WINDOWS_USE_FALLBACK_REQUIRED]",
         "[LOGIN_REQUIRED]",
         "[TOOLS_MISSING]",
         "[DRAFT_READY]",
@@ -180,13 +182,14 @@ function Get-PublishConfirmationRequest {
         return $null
     }
 
-    if ($ResultText -notmatch '(?s)\[PUBLISH_CONFIRMATION_REQUIRED\]\s*Site:\s*(?<site>[^\r\n]+)\s*Task:\s*(?<task>[^\r\n]+)(?:\s*Reason:\s*(?<reason>[^\r\n]+))?') {
+    if ($ResultText -notmatch '(?s)\[PUBLISH_CONFIRMATION_REQUIRED\]\s*Site:\s*(?<site>[^\r\n]+)\s*Task:\s*(?<task>[^\r\n]+)(?:\s*Reason:\s*(?<reason>[^\r\n]+))?(?:\s*Screenshot:\s*(?<screenshot>[^\r\n]+))?') {
         return $null
     }
 
     $siteText = $Matches['site'].Trim()
     $taskText = $Matches['task'].Trim()
     $reasonText = $Matches['reason'].Trim()
+    $screenshotText = $Matches['screenshot'].Trim()
     if ([string]::IsNullOrWhiteSpace($taskText)) {
         return $null
     }
@@ -195,6 +198,7 @@ function Get-PublishConfirmationRequest {
         Site = $siteText
         Task = $taskText
         Reason = $reasonText
+        Screenshot = $screenshotText
     }
 }
 
@@ -575,119 +579,6 @@ function Get-PublishSiteNameFromTask {
     return "the website"
 }
 
-function New-PublishWindowsUseTaskFromSite {
-    param(
-        [string]$Site,
-        [string]$OriginalTask
-    )
-
-    $siteName = if ([string]::IsNullOrWhiteSpace($Site)) { Get-PublishSiteNameFromTask -Task $OriginalTask } else { $Site.Trim() }
-    switch -Regex ($siteName.ToLowerInvariant()) {
-        'linkedin' {
-            return "In the already-open LinkedIn browser window with the verified draft ready, click the final 'Post' or 'Publish' button once to publish it. Do not edit the text first. If a final confirmation dialog appears, approve it."
-        }
-        'x\.com|twitter|x' {
-            return "In the already-open X.com browser window with the verified draft ready, click the final 'Post' button once to publish it. Do not edit the text first. If a final confirmation dialog appears, approve it."
-        }
-        default {
-            return "In the already-open browser window showing the verified draft on $siteName, click the final Publish/Post/Send/Submit button once to complete the action. Do not edit the text first. If a final confirmation dialog appears, approve it."
-        }
-    }
-}
-
-function Offer-WindowsUseEscalation {
-    param(
-        [object]$JobRecord,
-        [string]$TaskText,
-        [string]$ReasonText = ""
-    )
-
-    if ([string]::IsNullOrWhiteSpace($TaskText)) {
-        return $false
-    }
-
-    if (-not (Get-Command Test-WindowsUseFallbackAvailable -ErrorAction SilentlyContinue)) {
-        return $false
-    }
-    if (-not (Test-WindowsUseFallbackAvailable)) {
-        return $false
-    }
-
-    $windowsUseWrapper = Join-Path $workDir "skills\Windows_Use\Invoke-WindowsUse.ps1"
-    if (-not (Test-Path $windowsUseWrapper)) {
-        return $false
-    }
-
-    $quotedWrapper = if (Get-Command Convert-ToPowerShellSingleQuotedLiteral -ErrorAction SilentlyContinue) {
-        Convert-ToPowerShellSingleQuotedLiteral -Value $windowsUseWrapper
-    }
-    else {
-        "'" + $windowsUseWrapper.Replace("'", "''") + "'"
-    }
-    $quotedTask = if (Get-Command Convert-ToPowerShellSingleQuotedLiteral -ErrorAction SilentlyContinue) {
-        Convert-ToPowerShellSingleQuotedLiteral -Value $TaskText
-    }
-    else {
-        "'" + $TaskText.Replace("'", "''") + "'"
-    }
-
-    $cmd = "powershell -File $quotedWrapper -Task $quotedTask"
-    $confirmationId = [guid]::NewGuid().ToString("N")
-    Add-PendingConfirmation -ConfirmationId $confirmationId -Payload @{
-        Command    = $cmd
-        ChatId     = $JobRecord.ChatId
-        UserId     = ""
-        UserScoped = $false
-        CreatedAt  = Get-Date
-    }
-
-    $buttons = New-ConfirmationButtons -ConfirmData "confirm_cmd:$confirmationId" -CancelData "cancel_cmd:$confirmationId"
-    $safeReason = if ([string]::IsNullOrWhiteSpace($ReasonText)) { "OpenCode reported that local live desktop control is required." } else { $ReasonText.Trim() }
-    if ($safeReason.Length -gt 400) {
-        $safeReason = $safeReason.Substring(0, 400) + "..."
-    }
-
-    $taskPreview = if ([string]::IsNullOrWhiteSpace($TaskText)) { "" } else { $TaskText.Trim() }
-    if ($taskPreview.Length -gt 260) {
-        $taskPreview = $taskPreview.Substring(0, 260) + "..."
-    }
-
-    $message = @(
-        "OpenCode pide confirmacion para un clic/accion final con Windows-Use.",
-        "",
-        "Motivo:",
-        $safeReason,
-        "",
-        "Accion propuesta:",
-        $taskPreview,
-        "",
-        "Si apruebas, el orquestador lo ejecutara en el escritorio."
-    ) -join "`n"
-
-    Send-TelegramText -chatId $JobRecord.ChatId -text $message -buttons $buttons
-    Add-ChatMemory -chatId $JobRecord.ChatId -role "user" -content "[SYSTEM]: OpenCode requested a Windows-Use escalation for task '$($JobRecord.Task)'. Reason: $safeReason Proposed Windows-Use task: $TaskText"
-    Write-DailyLog -message "Windows-Use escalation offered for job $($JobRecord.Job.Id). Reason='$safeReason' task='$TaskText'" -type "WARN"
-    return $true
-}
-
-function Offer-PublishConfirmation {
-    param(
-        [object]$JobRecord,
-        [string]$SiteName,
-        [string]$TaskText,
-        [string]$ReasonText = ""
-    )
-
-    $reason = if ([string]::IsNullOrWhiteSpace($ReasonText)) {
-        "The draft is ready. The final publish click is treated as a separate irreversible desktop action that requires native confirmation."
-    }
-    else {
-        $ReasonText
-    }
-
-    return (Offer-WindowsUseEscalation -JobRecord $JobRecord -TaskText $TaskText -ReasonText $reason)
-}
-
 function Get-TelemetryTextPreview {
     param(
         [string]$Text,
@@ -742,7 +633,6 @@ function Convert-OpenCodeRuntimeStatusToText {
         "running" { return "trabajando" }
         "pending" { return "pendiente" }
         "waiting_for_login" { return "esperando login manual" }
-        "needs_desktop_control" { return "esperando Windows-Use" }
         "completed" { return "completado" }
         "failed" { return "fallo" }
         "stuck" { return "sin respuesta" }
@@ -1393,10 +1283,7 @@ function Complete-ActiveJobs {
         Write-DailyLog -message "Job $($j.Job.Id) result captured: len=$($subRes.Length) chars" -type "JOB"
 
         if ($j.CheckpointPath) {
-            $checkpointStatus = if ($subRes -match '\[WINDOWS_USE_FALLBACK_REQUIRED\]') {
-                "needs_desktop_control"
-            }
-            elseif ($subRes -match '\[LOGIN_REQUIRED\]') {
+            $checkpointStatus = if ($subRes -match '\[LOGIN_REQUIRED\]') {
                 "waiting_for_login"
             }
             elseif ($subRes -match '^\[ERROR_') {
@@ -1407,12 +1294,11 @@ function Complete-ActiveJobs {
             }
             $checkpointAction = switch ($checkpointStatus) {
                 "completed" { "Task completed" }
-                "needs_desktop_control" { "Task paused pending Windows-Use escalation" }
                 "waiting_for_login" { "Task paused pending manual website login" }
                 default { "Task finished with error" }
             }
             try {
-                Update-TaskCheckpointState -CheckpointPath $j.CheckpointPath -TaskText $j.Task -Status $checkpointStatus -ResultText $subRes -LastAction $checkpointAction -LastError $(if ($checkpointStatus -eq "failed") { $subRes } elseif ($checkpointStatus -eq "needs_desktop_control") { "OpenCode requested Windows-Use escalation." } elseif ($checkpointStatus -eq "waiting_for_login") { "OpenCode paused because manual website login is required." } else { "" })
+                Update-TaskCheckpointState -CheckpointPath $j.CheckpointPath -TaskText $j.Task -Status $checkpointStatus -ResultText $subRes -LastAction $checkpointAction -LastError $(if ($checkpointStatus -eq "failed") { $subRes } elseif ($checkpointStatus -eq "waiting_for_login") { "OpenCode paused because manual website login is required." } else { "" })
             }
             catch {
                 Write-DailyLog -message "Checkpoint update failed for job $($j.Job.Id): $_" -type "WARN"
@@ -1435,11 +1321,11 @@ function Complete-ActiveJobs {
                 }
             }
 
-            $windowsUseEscalation = Get-WindowsUseEscalationRequest -ResultText $subRes
             $publishConfirmation = Get-PublishConfirmationRequest -ResultText $subRes
             $loginRequired = Get-LoginRequiredRequest -ResultText $subRes
+            $windowsUseConfirmation = Get-WindowsUseConfirmationRequest -ResultText $subRes
 
-            if ($isParallelChild -and ($null -ne $windowsUseEscalation -or $null -ne $publishConfirmation -or $null -ne $loginRequired)) {
+            if ($isParallelChild -and ($null -ne $publishConfirmation -or $null -ne $loginRequired -or $null -ne $windowsUseConfirmation)) {
                 Write-DailyLog -message "Parallel child $($j.Job.Id) requested interactive follow-up. Cancelling remaining siblings in group $parallelGroupId." -type "WARN"
                 Stop-ParallelOpenCodeGroupChildren -GroupId $parallelGroupId -ExcludeJobId $j.Job.Id
                 Remove-ParallelOpenCodeGroup -GroupId $parallelGroupId | Out-Null
@@ -1549,34 +1435,8 @@ function Complete-ActiveJobs {
                         }
                     }
                     Add-ActiveJob -JobRecord $fallbackJob
-                    Write-JobsFile
-
                     Remove-Job -Job $j.Job -Force -ErrorAction SilentlyContinue
                     Remove-ActiveJobById -JobId $j.Job.Id
-                    continue
-                }
-            }
-
-            if ($j.Type -eq "OpenCode" -and $null -ne $windowsUseEscalation) {
-                $offered = Offer-WindowsUseEscalation -JobRecord $j -TaskText $windowsUseEscalation.Task -ReasonText $windowsUseEscalation.Reason
-                if ($offered) {
-                    if ($isParallelMerge) {
-                        Remove-ParallelOpenCodeGroup -GroupId $parallelGroupId | Out-Null
-                    }
-                    Remove-ActiveJobById -JobId $j.Job.Id
-                    Write-JobsFile
-                    continue
-                }
-            }
-
-            if (($j.Type -eq "OpenCode" -or $j.Type -eq "Script") -and $null -ne $publishConfirmation) {
-                $offered = Offer-PublishConfirmation -JobRecord $j -SiteName $publishConfirmation.Site -TaskText $publishConfirmation.Task -ReasonText $publishConfirmation.Reason
-                if ($offered) {
-                    if ($isParallelMerge) {
-                        Remove-ParallelOpenCodeGroup -GroupId $parallelGroupId | Out-Null
-                    }
-                    Remove-ActiveJobById -JobId $j.Job.Id
-                    Write-JobsFile
                     continue
                 }
             }
@@ -1595,18 +1455,106 @@ function Complete-ActiveJobs {
                 continue
             }
 
+            if ($j.Type -eq "OpenCode" -and $null -ne $windowsUseConfirmation) {
+                $taskPreview = $windowsUseConfirmation.Task
+                $reasonText = if ([string]::IsNullOrWhiteSpace($windowsUseConfirmation.Reason)) { "Desktop control required" } else { $windowsUseConfirmation.Reason }
+                $riskText = if ([string]::IsNullOrWhiteSpace($windowsUseConfirmation.Risk)) { "Controlará el mouse y teclado" } else { $windowsUseConfirmation.Risk }
+                
+                if ($taskPreview.Length -gt 300) {
+                    $taskPreview = $taskPreview.Substring(0, 300) + "..."
+                }
+                
+                $confirmationId = [guid]::NewGuid().ToString("N")
+                $windowsUseScript = Join-Path $workDir ".opencode\skills\Windows_Use\scripts\Invoke-WindowsUse.ps1"
+                $quotedScript = "'" + $windowsUseScript.Replace("'", "''") + "'"
+                $quotedTask = "'" + $taskPreview.Replace("'", "''") + "'"
+                $cmd = "powershell -File $quotedScript -Task $quotedTask"
+                
+                Add-PendingConfirmation -ConfirmationId $confirmationId -Payload @{
+                    Command    = $cmd
+                    ChatId     = $j.ChatId
+                    UserId     = ""
+                    UserScoped = $false
+                    CreatedAt  = Get-Date
+                    TaskDescription = $taskPreview
+                }
+                
+                $buttons = @(
+                    [PSCustomObject]@{ text = "✅ Aprobar Windows-Use"; callback_data = "confirm_windows_use:$confirmationId" },
+                    [PSCustomObject]@{ text = "❌ Rechazar"; callback_data = "cancel_windows_use:$confirmationId" }
+                )
+                
+                $message = @(
+                    "🖥️ *Windows-Use requiere confirmación*",
+                    "",
+                    "*Acción:* $taskPreview",
+                    "*Motivo:* $reasonText",
+                    "*Riesgo:* $riskText",
+                    "",
+                    "¿Aprobar el control de escritorio?"
+                ) -join "`n"
+                
+                Send-TelegramText -chatId $j.ChatId -text $message -buttons $buttons
+                Add-ChatMemory -chatId $j.ChatId -role "system" -content "[SYSTEM]: OpenCode requested Windows-Use desktop control confirmation. Task: $taskPreview. Reason: $reasonText. Risk: $riskText. Awaiting user approval."
+                Write-DailyLog -message "Windows-Use confirmation requested for job $($j.Job.Id). Task='$taskPreview'" -type "WARN"
+                
+                if ($isParallelMerge) {
+                    Remove-ParallelOpenCodeGroup -GroupId $parallelGroupId | Out-Null
+                }
+                Remove-ActiveJobById -JobId $j.Job.Id
+                Write-JobsFile
+                continue
+            }
+
+            # PUBLISH_CONFIRMATION_REQUIRED handler: stop and ask user for approval
+            if ($j.Type -eq "OpenCode" -and $null -ne $publishConfirmation) {
+                $siteName = if ([string]::IsNullOrWhiteSpace($publishConfirmation.Site)) { "the website" } else { $publishConfirmation.Site }
+                $taskPreview = $publishConfirmation.Task
+                $reasonText = if ([string]::IsNullOrWhiteSpace($publishConfirmation.Reason)) { "Draft is ready for publishing" } else { $publishConfirmation.Reason }
+                $screenshotPath = $publishConfirmation.Screenshot
+                
+                if ($taskPreview.Length -gt 300) {
+                    $taskPreview = $taskPreview.Substring(0, 300) + "..."
+                }
+                
+                # Send screenshot if available
+                if (-not [string]::IsNullOrWhiteSpace($screenshotPath)) {
+                    $fullScreenshotPath = if ([System.IO.Path]::IsPathRooted($screenshotPath)) { $screenshotPath } else { Join-Path $workDir $screenshotPath }
+                    if (Test-Path $fullScreenshotPath) {
+                        Send-TelegramPhoto -chatId $j.ChatId -filePath $fullScreenshotPath
+                        Write-DailyLog -message "Publish confirmation screenshot sent: $fullScreenshotPath" -type "JOB"
+                    }
+                }
+                
+                $emojiReady = [char]::ConvertFromUtf32(0x2705)
+                $emojiPublish = [char]::ConvertFromUtf32(0x1F4EF)
+                
+                $message = @(
+                    "$emojiReady *Borrador listo en $siteName*",
+                    "",
+                    "*Tarea:* $taskPreview",
+                    "*Motivo:* $reasonText",
+                    "",
+                    "El navegador quedo abierto con el boton de publicar visible.",
+                    "",
+                    "$emojiPublish *¿Quieres que lo publique ahora?* (responde si/no)"
+                ) -join "`n"
+                
+                Send-TelegramText -chatId $j.ChatId -text $message
+                Add-ChatMemory -chatId $j.ChatId -role "system" -content "[SYSTEM]: OpenCode prepared a draft on $siteName and is waiting for user confirmation to publish. The browser is open with the publish button visible. Do NOT re-delegate this task or take screenshots. Wait for the user to confirm (si/yes) or reject (no). If user confirms, execute the publish command from the PUBLISH_CONFIRMATION_REQUIRED marker."
+                Write-DailyLog -message "Publish confirmation requested for job $($j.Job.Id). Site='$siteName' Task='$taskPreview'" -type "WARN"
+                
+                if ($isParallelMerge) {
+                    Remove-ParallelOpenCodeGroup -GroupId $parallelGroupId | Out-Null
+                }
+                Remove-ActiveJobById -JobId $j.Job.Id
+                Write-JobsFile
+                continue
+            }
+
             $draftReady = Get-DraftReadyRequest -ResultText $subRes
             if ($j.Type -eq "Script" -and $null -ne $draftReady) {
                 $siteName = if ([string]::IsNullOrWhiteSpace($draftReady.Site)) { "the website" } else { $draftReady.Site }
-                if (Test-TaskRequestsFinalPublish -Task $j.Task) {
-                    $publishTask = New-PublishWindowsUseTaskFromSite -Site $siteName -OriginalTask $j.Task
-                    $offered = Offer-PublishConfirmation -JobRecord $j -SiteName $siteName -TaskText $publishTask -ReasonText "The draft is ready and verified. The final publish click must be separately approved through Windows-Use."
-                    if ($offered) {
-                        Remove-ActiveJobById -JobId $j.Job.Id
-                        Write-JobsFile
-                        continue
-                    }
-                }
                 if ("$($j.Label)" -eq "Web Interactive") {
                     Send-TelegramText -chatId $j.ChatId -text "[READY] La pagina quedo lista en $($siteName)`nDeje el navegador abierto para que revises el estado final y continues manualmente si quieres."
                     Add-ChatMemory -chatId $j.ChatId -role "system" -content "[SYSTEM]: A local browser automation script left $siteName open in a verified ready state for manual review. Do not claim it was submitted or published."

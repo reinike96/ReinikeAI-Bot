@@ -146,17 +146,7 @@ function Import-BotSettings {
             Timezone           = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_TIMEZONE" -JsonPath "browser.timezone" -DefaultValue "UTC"
             DebugPort          = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_DEBUG_PORT" -JsonPath "browser.debugPort" -DefaultValue 9333)
             KeepOpen           = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_KEEP_OPEN" -JsonPath "browser.keepOpen" -DefaultValue $true))
-        }
-        WindowsUse = [PSCustomObject]@{
-            Enabled       = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_ENABLED" -JsonPath "windowsUse.enabled" -DefaultValue $false))
-            PythonCommand = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_PYTHON_COMMAND" -JsonPath "windowsUse.pythonCommand" -DefaultValue "python"
-            Provider      = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_PROVIDER" -JsonPath "windowsUse.provider" -DefaultValue "openrouter"
-            Model         = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_MODEL" -JsonPath "windowsUse.model" -DefaultValue "z-ai/glm-5-turbo"
-            ReasoningEffort = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_REASONING_EFFORT" -JsonPath "windowsUse.reasoningEffort" -DefaultValue "low"
-            Browser       = Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_BROWSER" -JsonPath "windowsUse.browser" -DefaultValue "edge"
-            MaxSteps      = [int](Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_MAX_STEPS" -JsonPath "windowsUse.maxSteps" -DefaultValue 30)
-            UseVision     = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_USE_VISION" -JsonPath "windowsUse.useVision" -DefaultValue $false))
-            Experimental  = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "WINDOWS_USE_EXPERIMENTAL" -JsonPath "windowsUse.experimental" -DefaultValue $true))
+            HeadlessByDefault  = [System.Convert]::ToBoolean((Get-ResolvedConfigValue -JsonConfig $jsonConfig -EnvName "BROWSER_HEADLESS_BY_DEFAULT" -JsonPath "browser.headlessByDefault" -DefaultValue $true))
         }
         Paths = [PSCustomObject]@{
             WorkDir          = $root

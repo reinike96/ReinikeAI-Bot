@@ -310,23 +310,6 @@ function Install-PythonPlaywrightFallback {
     return $LASTEXITCODE -eq 0
 }
 
-function Install-WindowsUsePackage {
-    param([string]$PythonCommand)
-
-    $resolvedCommand = $PythonCommand
-    if ([string]::IsNullOrWhiteSpace($resolvedCommand)) {
-        $resolvedCommand = Get-PythonCommandName
-    }
-
-    if ([string]::IsNullOrWhiteSpace($resolvedCommand)) {
-        Write-Host "[Setup] Python is not available. Skipping Windows-Use installation." -ForegroundColor Yellow
-        return $false
-    }
-
-    & $resolvedCommand -m pip install windows-use
-    return $LASTEXITCODE -eq 0
-}
-
 function Test-TelegramBotToken {
     param([string]$BotToken)
 
@@ -752,55 +735,6 @@ if ($installPlaywrightPython) {
     Write-Host $(if ($playwrightPythonOk) { "[Setup] Python Playwright fallback installed." } else { "[Setup] Python Playwright fallback was not installed successfully." }) -ForegroundColor $(if ($playwrightPythonOk) { "Green" } else { "Yellow" })
 }
 
-$currentWindowsUseEnabled = $false
-$currentWindowsUsePython = ""
-$currentWindowsUseProvider = "openrouter"
-$currentWindowsUseModel = "z-ai/glm-5-turbo"
-$currentWindowsUseReasoningEffort = "low"
-$currentWindowsUseBrowser = "edge"
-$currentWindowsUseMaxSteps = 30
-$currentWindowsUseUseVision = $false
-$currentWindowsUseExperimental = $true
-if ($currentSettings.PSObject.Properties["WindowsUse"] -and $null -ne $currentSettings.WindowsUse) {
-    if ($null -ne $currentSettings.WindowsUse.Enabled) { $currentWindowsUseEnabled = [bool]$currentSettings.WindowsUse.Enabled }
-    if ($currentSettings.WindowsUse.PythonCommand) { $currentWindowsUsePython = $currentSettings.WindowsUse.PythonCommand }
-    if ($currentSettings.WindowsUse.Provider) { $currentWindowsUseProvider = $currentSettings.WindowsUse.Provider }
-    if ($currentSettings.WindowsUse.Model) { $currentWindowsUseModel = $currentSettings.WindowsUse.Model }
-    if ($currentSettings.WindowsUse.PSObject.Properties["ReasoningEffort"] -and $currentSettings.WindowsUse.ReasoningEffort) { $currentWindowsUseReasoningEffort = $currentSettings.WindowsUse.ReasoningEffort }
-    if ($currentSettings.WindowsUse.Browser) { $currentWindowsUseBrowser = $currentSettings.WindowsUse.Browser }
-    if ($currentSettings.WindowsUse.MaxSteps) { $currentWindowsUseMaxSteps = [int]$currentSettings.WindowsUse.MaxSteps }
-    if ($null -ne $currentSettings.WindowsUse.UseVision) { $currentWindowsUseUseVision = [bool]$currentSettings.WindowsUse.UseVision }
-    if ($null -ne $currentSettings.WindowsUse.Experimental) { $currentWindowsUseExperimental = [bool]$currentSettings.WindowsUse.Experimental }
-}
-
-$windowsUseEnabled = Read-BooleanAnswer -Prompt "Enable the optional Windows-Use desktop automation skill?" -Default $currentWindowsUseEnabled
-$windowsUsePythonCommand = $currentWindowsUsePython
-$windowsUseProvider = $currentWindowsUseProvider
-$windowsUseModel = $currentWindowsUseModel
-$windowsUseReasoningEffort = $currentWindowsUseReasoningEffort
-$windowsUseBrowser = $currentWindowsUseBrowser
-$windowsUseMaxSteps = $currentWindowsUseMaxSteps
-$windowsUseUseVision = $currentWindowsUseUseVision
-$windowsUseExperimental = $currentWindowsUseExperimental
-
-if ($windowsUseEnabled) {
-    $detectedPythonCommand = Get-DetectedPythonCommandPath
-    $windowsUsePythonCommand = Read-ValuePrompt -Prompt "Windows-Use Python command or full path" -DefaultValue $(if (-not [string]::IsNullOrWhiteSpace($windowsUsePythonCommand)) { $windowsUsePythonCommand } elseif (-not [string]::IsNullOrWhiteSpace($detectedPythonCommand)) { $detectedPythonCommand } else { "python" }) -Required
-    $windowsUseProvider = Read-ValuePrompt -Prompt "Windows-Use provider" -DefaultValue $(if ([string]::IsNullOrWhiteSpace($windowsUseProvider)) { "openrouter" } else { $windowsUseProvider }) -Required
-    $windowsUseModel = Read-ValuePrompt -Prompt "Windows-Use model" -DefaultValue $(if ([string]::IsNullOrWhiteSpace($windowsUseModel)) { "z-ai/glm-5-turbo" } else { $windowsUseModel }) -Required
-    $windowsUseReasoningEffort = Read-ValuePrompt -Prompt "Windows-Use reasoning effort" -DefaultValue $(if ([string]::IsNullOrWhiteSpace($windowsUseReasoningEffort)) { "low" } else { $windowsUseReasoningEffort }) -Required
-    $windowsUseBrowser = Read-ValuePrompt -Prompt "Windows-Use browser (edge/chrome/firefox)" -DefaultValue $(if ([string]::IsNullOrWhiteSpace($windowsUseBrowser)) { "edge" } else { $windowsUseBrowser }) -Required
-    $windowsUseMaxStepsInput = Read-ValuePrompt -Prompt "Windows-Use max steps" -DefaultValue "$windowsUseMaxSteps" -Required
-    $windowsUseMaxSteps = [Math]::Max(1, [int]$windowsUseMaxStepsInput)
-    $windowsUseUseVision = Read-BooleanAnswer -Prompt "Enable Windows-Use vision mode by default?" -Default $windowsUseUseVision
-    $windowsUseExperimental = Read-BooleanAnswer -Prompt "Enable Windows-Use experimental mode by default?" -Default $windowsUseExperimental
-
-    if (Read-BooleanAnswer -Prompt "Install the Windows-Use Python package now?" -Default $true) {
-        $windowsUseInstallOk = Install-WindowsUsePackage -PythonCommand $windowsUsePythonCommand
-        Write-Host $(if ($windowsUseInstallOk) { "[Setup] Windows-Use installed successfully." } else { "[Setup] Windows-Use installation failed." }) -ForegroundColor $(if ($windowsUseInstallOk) { "Green" } else { "Yellow" })
-    }
-}
-
 Write-Host ""
 Write-Host "Step 2: Telegram and API credentials" -ForegroundColor Green
 $botToken = Read-ValuePrompt -Prompt "Telegram bot token" -DefaultValue $currentSettings.Telegram.BotToken -Required
@@ -978,17 +912,6 @@ $settingsObject = [ordered]@{
         playwrightProfileDir = $playwrightProfileInput
         locale = $currentSettings.Browser.Locale
         timezone = $currentSettings.Browser.Timezone
-    }
-    windowsUse = [ordered]@{
-        enabled = [bool]$windowsUseEnabled
-        pythonCommand = $windowsUsePythonCommand
-        provider = $windowsUseProvider
-        model = $windowsUseModel
-        reasoningEffort = $windowsUseReasoningEffort
-        browser = $windowsUseBrowser
-        maxSteps = [int]$windowsUseMaxSteps
-        useVision = [bool]$windowsUseUseVision
-        experimental = [bool]$windowsUseExperimental
     }
     paths = [ordered]@{
         downloadsDir = $downloadsDir

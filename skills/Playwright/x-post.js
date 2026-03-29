@@ -243,24 +243,32 @@ function splitIntoThreadSegments(postContent, maxLen = 260) {
 }
 
 function getVerificationNeedle(postContent) {
-    const preferredSnippets = [
-        'InCoder-32B',
-        'AI Meets Heavy Industry',
-        'Chip design (Verilog)',
-        'https://reinikeai.com/#blog/paper-2603-16790'
-    ];
-
-    for (const snippet of preferredSnippets) {
-        if (postContent.includes(snippet)) {
-            return snippet;
+    // Try to find a unique, searchable text from the post
+    // First, try to find URLs which are unique
+    const urlMatch = postContent.match(/https?:\/\/[^\s]+/);
+    if (urlMatch) {
+        return urlMatch[0];
+    }
+    
+    // Try to find the title (usually after the emoji on the first line)
+    const lines = postContent.split(/\r?\n/);
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.length === 0) continue;
+        
+        // Remove emoji and get the text
+        const textWithoutEmoji = trimmed.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim();
+        if (textWithoutEmoji.length >= 10) {
+            // Return a portion of the text that's likely to be unique
+            return textWithoutEmoji.slice(0, 50);
         }
     }
-
-    const firstNonEmptyLine = postContent
-        .split(/\r?\n/)
+    
+    // Fallback: return first significant text
+    const firstNonEmptyLine = lines
         .map(line => line.trim())
         .find(line => line.length >= 8);
-
+    
     return firstNonEmptyLine || postContent.slice(0, 40);
 }
 
@@ -543,6 +551,340 @@ async function isPostButtonVisible(page) {
     return false;
 }
 
+async function verifyPublication(page, postContent, verificationScreenshot) {
+    // Get verification needle (first significant text from the post)
+    const needle = getVerificationNeedle(postContent);
+    
+    // Wait a moment for the post to appear
+    await sleep(3000);
+    
+    // Try to find the post on the current page (home feed)
+    try {
+        const postLocator = page.locator(`article`).filter({ hasText: needle }).first();
+        if (await postLocator.count() > 0) {
+            const isVisible = await postLocator.isVisible({ timeout: 3000 }).catch(() => false);
+            if (isVisible) {
+                await page.screenshot({ path: verificationScreenshot, fullPage: false });
+                return { verified: true, method: 'home_feed' };
+            }
+        }
+    } catch {}
+    
+    // Navigate to user's profile to verify
+    try {
+        // Get the username from the page or construct the URL
+        const currentUrl = page.url();
+        let profileUrl = 'https://x.com/home';
+        
+        // Try to extract username from current URL or use ReinikeAI as default
+        if (currentUrl.includes('x.com/') || currentUrl.includes('twitter.com/')) {
+            const urlParts = currentUrl.split('/');
+            const potentialUsername = urlParts.find(part => part && !part.includes('x.com') && !part.includes('twitter.com') && !part.includes('http'));
+            if (potentialUsername && potentialUsername !== 'home' && potentialUsername !== 'compose') {
+                profileUrl = `https://x.com/${potentialUsername}`;
+            }
+        }
+        
+        // Navigate to profile
+        await page.goto(profileUrl === 'https://x.com/home' ? 'https://x.com/ReinikeAI' : profileUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await sleep(4000);
+        
+        // Look for the post on the profile
+        const profilePostLocator = page.locator(`article`).filter({ hasText: needle }).first();
+        if (await profilePostLocator.count() > 0) {
+            const isVisible = await profilePostLocator.isVisible({ timeout: 5000 }).catch(() => false);
+            if (isVisible) {
+                await page.screenshot({ path: verificationScreenshot, fullPage: false });
+                
+                // Try to get the post URL
+                const postLink = profilePostLocator.locator('a[href*="/status/"]').first();
+                let postUrl = null;
+                if (await postLink.count() > 0) {
+                    postUrl = await postLink.getAttribute('href').catch(() => null);
+                    if (postUrl && !postUrl.startsWith('http')) {
+                        postUrl = `https://x.com${postUrl}`;
+                    }
+                }
+                
+                return { verified: true, method: 'profile', postUrl };
+            }
+        }
+        
+        // Alternative: look for any article with the needle text
+        const allArticles = page.locator('article[data-testid="tweet"]');
+        const articleCount = await allArticles.count();
+        for (let i = 0; i < articleCount; i++) {
+            try {
+                const article = allArticles.nth(i);
+                const text = await article.innerText().catch(() => '');
+                if (text.includes(needle)) {
+                    await page.screenshot({ path: verificationScreenshot, fullPage: false });
+                    
+                    const postLink = article.locator('a[href*="/status/"]').first();
+                    let postUrl = null;
+                    if (await postLink.count() > 0) {
+                        postUrl = await postLink.getAttribute('href').catch(() => null);
+                        if (postUrl && !postUrl.startsWith('http')) {
+                            postUrl = `https://x.com${postUrl}`;
+                        }
+                    }
+                    
+                    return { verified: true, method: 'profile', postUrl };
+                }
+            } catch {}
+        }
+    } catch {}
+    
+    // Fallback: just take a screenshot of current state
+    await page.screenshot({ path: verificationScreenshot, fullPage: false });
+    return { verified: false, method: 'screenshot_only' };
+}
+
+async function runPublishOnly({ projectRoot, debugPort, statePath, outputScreenshot }) {
+    ensureDirForFile(outputScreenshot);
+    ensureDirForFile(statePath);
+    
+    // Create debug screenshot path
+    const debugScreenshot = outputScreenshot.replace('.png', '-debug.png');
+    
+    writeState(statePath, {
+        status: 'publishing',
+        site: 'X.com',
+        screenshot: outputScreenshot,
+        mode: 'publish_only',
+    });
+    
+    console.log('[DEBUG] Starting publish-only mode...');
+    console.log(`[DEBUG] Debug port: ${debugPort}`);
+    
+    // Wait for browser to be available
+    const ready = await waitForDebugger(debugPort, 5000);
+    if (!ready) {
+        writeState(statePath, {
+            status: 'error',
+            site: 'X.com',
+            reason: 'Browser not found. Make sure Chrome is running with remote debugging.',
+            screenshot: outputScreenshot,
+        });
+        console.log('[ERROR] Browser not found. Make sure Chrome is running with remote debugging.');
+        process.exit(1);
+    }
+    
+    console.log('[DEBUG] Browser found, connecting...');
+    
+    let browser = null;
+    try {
+        browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
+        const context = await getXContext(browser);
+        const existingXPages = context.pages().filter(page => {
+            try {
+                const url = page.url() || '';
+                return url.includes('x.com') || url.includes('twitter.com');
+            } catch {
+                return false;
+            }
+        });
+        
+        console.log(`[DEBUG] Found ${existingXPages.length} X.com page(s)`);
+        
+        if (existingXPages.length === 0) {
+            throw new Error('No X.com page found in browser.');
+        }
+        
+        const page = existingXPages[existingXPages.length - 1];
+        await page.bringToFront().catch(() => {});
+        await sleep(1000);
+        
+        console.log(`[DEBUG] Current URL: ${page.url()}`);
+        
+        // Take initial screenshot for debugging
+        await page.screenshot({ path: debugScreenshot, fullPage: false });
+        console.log(`[DEBUG] Initial screenshot saved: ${debugScreenshot}`);
+        
+        // Dismiss any overlays first
+        await dismissCookieConsent(page);
+        await sleep(500);
+        
+        // Extended list of Post button selectors (X.com changes these frequently)
+        const postSelectors = [
+            // Primary selectors
+            'button[data-testid="tweetButton"]',
+            'button[data-testid="tweetButtonInline"]',
+            // Alternative selectors
+            'button[data-testid="tweetButtonSubmit"]',
+            'button[data-testid="Button"]',
+            // Text-based selectors
+            'button:has-text("Post")',
+            'button:has-text("Reply")',
+            'div[role="button"]:has-text("Post")',
+            // Data attribute variations
+            'button[data-testid*="tweet"]',
+            'button[data-testid*="post"]',
+            // CSS class based (less reliable but fallback)
+            'button.css-175oi2r:has-text("Post")',
+        ];
+        
+        let clicked = false;
+        let usedSelector = null;
+        
+        // Strategy 1: Try Playwright click with each selector
+        console.log('[DEBUG] Trying Playwright click...');
+        for (const selector of postSelectors) {
+            try {
+                const btn = page.locator(selector).first();
+                const count = await btn.count();
+                if (count > 0) {
+                    const isVisible = await btn.isVisible({ timeout: 1000 }).catch(() => false);
+                    if (isVisible) {
+                        // Check if button is not disabled
+                        const isDisabled = await btn.evaluate(el => {
+                            return el.disabled || 
+                                   el.getAttribute('aria-disabled') === 'true' ||
+                                   el.classList.contains('disabled') ||
+                                   el.hasAttribute('disabled');
+                        }).catch(() => true);
+                        
+                        console.log(`[DEBUG] Found button with selector: ${selector} (disabled: ${isDisabled})`);
+                        
+                        if (!isDisabled) {
+                            await btn.click({ timeout: 5000, force: true });
+                            clicked = true;
+                            usedSelector = selector;
+                            console.log(`[DEBUG] Clicked with Playwright: ${selector}`);
+                            break;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log(`[DEBUG] Selector ${selector} failed: ${e.message}`);
+            }
+        }
+        
+        // Strategy 2: Try JavaScript click in page context
+        if (!clicked) {
+            console.log('[DEBUG] Trying JavaScript click...');
+            const clickResult = await page.evaluate(() => {
+                // Extended selectors for JavaScript
+                const selectors = [
+                    'button[data-testid="tweetButton"]',
+                    'button[data-testid="tweetButtonInline"]',
+                    'button[data-testid="tweetButtonSubmit"]',
+                    'button:has-text("Post")',
+                    'div[role="button"]:has-text("Post")',
+                ];
+                
+                for (const selector of selectors) {
+                    try {
+                        const btns = document.querySelectorAll(selector);
+                        for (const btn of btns) {
+                            if (btn && !btn.disabled && btn.offsetParent !== null) {
+                                // Try multiple click methods
+                                btn.click();
+                                // Also try dispatching event
+                                btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                                return { clicked: true, selector };
+                            }
+                        }
+                    } catch (e) {}
+                }
+                
+                // Fallback: Find by text content
+                const allButtons = document.querySelectorAll('button, div[role="button"]');
+                for (const btn of allButtons) {
+                    const text = (btn.textContent || '').trim().toLowerCase();
+                    if ((text === 'post' || text === 'reply') && !btn.disabled && btn.offsetParent !== null) {
+                        btn.click();
+                        btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                        return { clicked: true, selector: 'text-based' };
+                    }
+                }
+                
+                return { clicked: false };
+            });
+            
+            if (clickResult.clicked) {
+                clicked = true;
+                usedSelector = clickResult.selector;
+                console.log(`[DEBUG] Clicked with JavaScript: ${clickResult.selector}`);
+            }
+        }
+        
+        // Strategy 3: Try keyboard shortcut (Ctrl+Enter or Enter)
+        if (!clicked) {
+            console.log('[DEBUG] Trying keyboard shortcut...');
+            // Focus on the composer area first
+            try {
+                const composer = page.locator('div[data-testid^="tweetTextarea"], div[role="textbox"][contenteditable="true"]').first();
+                if (await composer.count() > 0) {
+                    await composer.focus({ timeout: 2000 });
+                    await sleep(300);
+                    // Try Ctrl+Enter (common shortcut for posting)
+                    await page.keyboard.press('Control+Enter');
+                    await sleep(500);
+                    // Also try just Enter
+                    await page.keyboard.press('Enter');
+                    clicked = true;
+                    usedSelector = 'keyboard';
+                    console.log('[DEBUG] Tried keyboard shortcuts');
+                }
+            } catch (e) {
+                console.log(`[DEBUG] Keyboard shortcut failed: ${e.message}`);
+            }
+        }
+        
+        // Take final screenshot
+        await sleep(2000);
+        await page.screenshot({ path: outputScreenshot, fullPage: false });
+        
+        if (clicked) {
+            console.log('[POSTED]');
+            console.log('Site: X.com');
+            console.log(`Method: ${usedSelector}`);
+            console.log(`Screenshot: ${outputScreenshot}`);
+            
+            writeState(statePath, {
+                status: 'published',
+                site: 'X.com',
+                screenshot: outputScreenshot,
+                currentUrl: page.url(),
+                mode: 'publish_only',
+                method: usedSelector,
+            });
+        } else {
+            // Save debug info
+            const pageContent = await page.content().catch(() => '');
+            const debugHtmlPath = outputScreenshot.replace('.png', '-debug.html');
+            fs.writeFileSync(debugHtmlPath, pageContent, 'utf8');
+            
+            writeState(statePath, {
+                status: 'post_failed',
+                site: 'X.com',
+                reason: 'Post button not found or not clickable',
+                screenshot: outputScreenshot,
+                debugScreenshot,
+                debugHtml: debugHtmlPath,
+            });
+            
+            console.log('[POST_FAILED] Post button not found or not clickable');
+            console.log(`[DEBUG] Debug screenshot: ${debugScreenshot}`);
+            console.log(`[DEBUG] Debug HTML: ${debugHtmlPath}`);
+            console.log('[DEBUG] Check these files to see the page state');
+            process.exit(1);
+        }
+        
+        process.exit(0);
+    } catch (error) {
+        writeState(statePath, {
+            status: 'error',
+            site: 'X.com',
+            reason: error.message,
+            screenshot: outputScreenshot,
+        });
+        console.error(`[ERROR] ${error.message}`);
+        process.exit(1);
+    }
+}
+
 async function run() {
     const args = parseArgs(process.argv.slice(2));
     const projectRoot = process.env.BOT_PROJECT_ROOT || process.cwd();
@@ -552,8 +894,17 @@ async function run() {
     const statePath = args.state || path.join(projectRoot, 'archives', 'x-draft-state.json');
     const contentPath = args.content;
     const debugPort = Number.parseInt(args.port || process.env.BROWSER_DEBUG_PORT || '9333', 10);
+    const publishOnly = (args['publish-only'] || 'false').trim().toLowerCase() === 'true';
+    
+    // If publish-only mode, just click the Post button on existing draft
+    if (publishOnly) {
+        await runPublishOnly({ projectRoot, debugPort, statePath, outputScreenshot });
+        return;
+    }
+    
     const postContent = readRequiredText(contentPath, 'Post content');
     const draftMode = (process.env.X_DRAFT_MODE || 'single').trim().toLowerCase();
+    const noPublish = (process.env.X_NO_PUBLISH || args['no-publish'] || 'false').trim().toLowerCase() === 'true';
     const segments = draftMode === 'thread' ? splitIntoThreadSegments(postContent) : [postContent];
 
     ensureDirForFile(outputScreenshot);
@@ -672,35 +1023,151 @@ async function run() {
 console.log('[DRAFT_READY]');
 console.log('Site: X.com');
 console.log(`Screenshot: ${outputScreenshot}`);
+
+// If no-publish mode is enabled, stop here and return the confirmation marker
+if (noPublish) {
+    writeState(statePath, {
+        status: 'draft_ready_no_publish',
+        site: 'X.com',
+        screenshot: outputScreenshot,
+        currentUrl: page.url(),
+        mode: draftMode,
+        segments: segments.length,
+        noPublish: true,
+    });
+    
+    console.log('[PUBLISH_CONFIRMATION_REQUIRED]');
+    console.log('Site: X (Twitter)');
+    console.log('Task: Click the Post button in the already-open X composer');
+    console.log('Reason: Draft is ready and verified, awaiting user confirmation to publish');
+    console.log('Screenshot: ' + outputScreenshot);
+    process.exit(0);
+}
+
 // Attempt to post the tweet automatically
-// First, remove any overlay elements that might block the click
-await page.evaluate(() => {
-    const layers = document.getElementById('layers');
-    if (layers) {
-        while (layers.firstChild) {
-            layers.removeChild(layers.firstChild);
+// Use a more conservative approach - don't remove overlays aggressively
+await sleep(1000);
+
+// Try to click the post button using JavaScript (more reliable)
+const clickResult = await page.evaluate(() => {
+    // Find the post button
+    const selectors = [
+        'button[data-testid="tweetButton"]',
+        'button[data-testid="tweetButtonInline"]'
+    ];
+    
+    for (const selector of selectors) {
+        const btn = document.querySelector(selector);
+        if (btn && !btn.disabled) {
+            btn.click();
+            return { clicked: true, selector };
         }
     }
-    // Also remove any fixed overlay divs
-    document.querySelectorAll('[role="presentation"]').forEach(el => {
-        if (el.style.position === 'fixed' || getComputedStyle(el).position === 'fixed') {
-            el.remove();
-        }
-    });
-}).catch(() => {});
-await sleep(500);
+    
+    return { clicked: false };
+});
 
-const postBtn = page.locator('button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]').first();
-if (await postBtn.count() > 0 && await postBtn.isVisible({ timeout: 2000 })) {
-    await postBtn.click({ timeout: 5000, force: true });
+if (clickResult.clicked) {
     await sleep(3000);
     console.log('[POSTED]');
+    console.log(`Button clicked: ${clickResult.selector}`);
+    
+    // Verify publication
+    const verificationScreenshot = path.join(projectRoot, 'archives', 'x-post-verification.png');
+    const verification = await verifyPublication(page, postContent, verificationScreenshot);
+    
+    if (verification.verified) {
+        console.log('[VERIFIED]');
+        console.log(`Verification method: ${verification.method}`);
+        if (verification.postUrl) {
+            console.log(`Post URL: ${verification.postUrl}`);
+        }
+        console.log(`Verification screenshot: ${verificationScreenshot}`);
+        
+        writeState(statePath, {
+            status: 'published_verified',
+            site: 'X.com',
+            screenshot: outputScreenshot,
+            verificationScreenshot,
+            verificationMethod: verification.method,
+            postUrl: verification.postUrl || null,
+            currentUrl: page.url(),
+            mode: draftMode,
+            segments: segments.length,
+        });
+    } else {
+        console.log('[VERIFICATION_FAILED]');
+        console.log(`Screenshot saved: ${verificationScreenshot}`);
+        
+        writeState(statePath, {
+            status: 'published_unverified',
+            site: 'X.com',
+            screenshot: outputScreenshot,
+            verificationScreenshot,
+            currentUrl: page.url(),
+            mode: draftMode,
+            segments: segments.length,
+        });
+    }
 } else {
-    console.log('[POST_FAILED] Post button not found');
+    // Fallback: try Playwright click
+    const postBtn = page.locator('button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]').first();
+    if (await postBtn.count() > 0) {
+        await postBtn.click({ timeout: 5000 });
+        await sleep(3000);
+        console.log('[POSTED]');
+        console.log('Button clicked via Playwright');
+        
+        // Verify publication
+        const verificationScreenshot = path.join(projectRoot, 'archives', 'x-post-verification.png');
+        const verification = await verifyPublication(page, postContent, verificationScreenshot);
+        
+        if (verification.verified) {
+            console.log('[VERIFIED]');
+            console.log(`Verification method: ${verification.method}`);
+            if (verification.postUrl) {
+                console.log(`Post URL: ${verification.postUrl}`);
+            }
+            console.log(`Verification screenshot: ${verificationScreenshot}`);
+            
+            writeState(statePath, {
+                status: 'published_verified',
+                site: 'X.com',
+                screenshot: outputScreenshot,
+                verificationScreenshot,
+                verificationMethod: verification.method,
+                postUrl: verification.postUrl || null,
+                currentUrl: page.url(),
+                mode: draftMode,
+                segments: segments.length,
+            });
+        } else {
+            console.log('[VERIFICATION_FAILED]');
+            console.log(`Screenshot saved: ${verificationScreenshot}`);
+            
+            writeState(statePath, {
+                status: 'published_unverified',
+                site: 'X.com',
+                screenshot: outputScreenshot,
+                verificationScreenshot,
+                currentUrl: page.url(),
+                mode: draftMode,
+                segments: segments.length,
+            });
+        }
+    } else {
+        console.log('[POST_FAILED] Post button not found');
+        writeState(statePath, {
+            status: 'post_failed',
+            site: 'X.com',
+            reason: 'Post button not found',
+            screenshot: outputScreenshot,
+            mode: draftMode,
+        });
+    }
 }
 process.exit(0);
-        process.exit(0);
-    } catch (error) {
+} catch (error) {
         writeState(statePath, {
             status: 'error',
             site: 'X.com',

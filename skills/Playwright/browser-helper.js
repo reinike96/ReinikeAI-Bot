@@ -108,7 +108,7 @@ function resolveChromeLaunchProfile(projectRoot) {
     };
 }
 
-async function ensureManagedChrome({ chromeExecutable, userDataDir, profileDirectory, debugPort, startUrl }) {
+async function ensureManagedChrome({ chromeExecutable, userDataDir, profileDirectory, debugPort, startUrl, headless }) {
     const ready = await waitForDebugger(debugPort, 1000);
     if (ready) {
         return false;
@@ -124,6 +124,9 @@ async function ensureManagedChrome({ chromeExecutable, userDataDir, profileDirec
         '--no-first-run',
         '--no-default-browser-check',
     ];
+    if (headless) {
+        args.push('--headless=new');
+    }
     if (profileDirectory) {
         args.push(`--profile-directory=${profileDirectory}`);
     }
@@ -226,17 +229,20 @@ async function run() {
     const action = process.argv[2];
     const url = process.argv[3];
     const outputPath = process.argv[4];
+    const headlessArg = process.argv[5];
 
     if (!action || !url) {
-        console.error('Usage: node browser-helper.js <action> <url> [outputPath]');
+        console.error('Usage: node browser-helper.js <action> <url> [outputPath] [headless]');
         process.exit(1);
     }
 
+    const headless = headlessArg === 'true' || headlessArg === '1';
     const projectRoot = process.env.BOT_PROJECT_ROOT || process.cwd();
     const chromeExecutable = process.env.CHROME_EXECUTABLE || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
     const launchProfile = resolveChromeLaunchProfile(projectRoot);
     const debugPort = Number.parseInt(process.env.BROWSER_DEBUG_PORT || '9333', 10);
-    const keepOpen = envBool('BROWSER_KEEP_OPEN', true);
+    // In headless mode, always close the browser after the task
+    const keepOpen = headless ? false : envBool('BROWSER_KEEP_OPEN', true);
 
     await ensureManagedChrome({
         chromeExecutable,
@@ -244,6 +250,7 @@ async function run() {
         profileDirectory: launchProfile.profileDirectory,
         debugPort,
         startUrl: action === 'SearchGoogle' || action === 'GoogleTopResultsScreenshots' ? 'https://www.google.com' : url,
+        headless,
     });
 
     const { browser, context } = await connectToManagedBrowser(debugPort);

@@ -26,12 +26,6 @@ function Get-SkillRoutingProfile {
             Reason = "Outlook workflows usually require checks, branching, or higher-risk side effects."
         },
         @{
-            SkillName = "Windows-Use"
-            Pattern = '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1'
-            Classification = "hybrid"
-            Reason = "Windows-Use is acceptable for bounded local desktop automation, but broader workflows should still go through OpenCode."
-        },
-        @{
             SkillName = "Telegram Sender"
             Pattern = '(?i)skills\\Telegram_Sender\\.+\.ps1'
             Classification = "orchestrator-only"

@@ -176,44 +176,16 @@ function Invoke-TelegramCallbackRoute {
                 return
             }
 
-            if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
-                $scopeText = Get-LastMeaningfulUserRequest -ChatId "$chatId"
-                Set-WindowsUseApproval -ChatId "$chatId" -UserId "$userId" -Command "$($pending.Command)" -ScopeText $scopeText
-                Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: The user explicitly approved the orchestrator's native confirmation for this Windows-Use action. The action is authorized and is now executing. Do not ask for confirmation again unless a new sensitive action is proposed."
-            }
-            else {
-                Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: The user explicitly approved the orchestrator's native confirmation for this sensitive command. The action is authorized and is now executing. Do not ask for confirmation again unless a new sensitive action is proposed."
-            }
+            Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: The user explicitly approved the orchestrator's native confirmation for this sensitive command. The action is authorized and is now executing. Do not ask for confirmation again unless a new sensitive action is proposed."
 
-            if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
-                $taskPreview = Get-WindowsUseTaskTextFromCommand -Command "$($pending.Command)"
-                if ($taskPreview.Length -gt 220) {
-                    $taskPreview = $taskPreview.Substring(0, 220) + "..."
-                }
-                $runText = if ([string]::IsNullOrWhiteSpace($taskPreview)) {
-                    "🖥️ Ejecutando Windows-Use en segundo plano..."
-                }
-                else {
-                    "🖥️ Ejecutando Windows-Use en segundo plano...`n`n*$taskPreview*"
-                }
-                Send-TelegramText -chatId $chatId -text $runText
-            }
-            else {
-                Send-TelegramText -chatId $chatId -text "🚀 Ejecutando comando aprobado en segundo plano..."
-            }
+            Send-TelegramText -chatId $chatId -text "🚀 Ejecutando comando aprobado en segundo plano..."
             $jobRecord = Start-ScriptJob -scriptCmd $pending.Command -chatId $chatId -taskLabel "Approved CMD" -originalTask $pending.Command
             $jobRecord.Label = "Approved CMD"
             $jobRecord.Capability = "local_command"
             $jobRecord.ExecutionMode = "confirmed_cmd"
             Add-ActiveJob -JobRecord $jobRecord
             Write-JobsFile
-            $statusText = if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
-                "🖥️ Windows-Use aprobado en ejecución."
-            }
-            else {
-                "🚀 Comando aprobado en ejecución."
-            }
-            Update-TelegramStatus -job $jobRecord -text $statusText
+            Update-TelegramStatus -job $jobRecord -text "🚀 Comando aprobado en ejecución."
         }
         else {
             Send-TelegramText -chatId $chatId -text "⌛ Esa confirmación expiró o ya fue usada."
@@ -228,9 +200,6 @@ function Invoke-TelegramCallbackRoute {
             if ($pending.UserId -and "$($pending.UserId)" -ne "$userId") {
                 Send-TelegramText -chatId $chatId -text "This confirmation belongs to a different user."
                 return
-            }
-            if ("$($pending.Command)" -match '(?i)skills\\Windows_Use\\Invoke-WindowsUse\.ps1') {
-                Clear-WindowsUseApproval -ChatId "$chatId"
             }
             Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: The user cancelled a pending sensitive command: $($pending.Command)"
         }
@@ -286,12 +255,43 @@ function Invoke-TelegramCallbackRoute {
         exit 0
     }
 
+    if ($callbackData -match '^confirm_windows_use:(.+)$') {
+        $confirmationId = $Matches[1]
+        $pending = Remove-PendingConfirmation -ConfirmationId $confirmationId
+        if ($null -ne $pending) {
+            Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: User approved Windows-Use desktop control. Task: $($pending.TaskDescription)"
+            Send-TelegramText -chatId $chatId -text "🖥️ Ejecutando Windows-Use...`n`n*$($pending.TaskDescription)*"
+            
+            $jobRecord = Start-ScriptJob -scriptCmd $pending.Command -chatId $chatId -taskLabel "Windows-Use" -originalTask $pending.TaskDescription
+            $jobRecord.Label = "Windows-Use (Approved)"
+            $jobRecord.Capability = "desktop_control"
+            $jobRecord.ExecutionMode = "windows_use_approved"
+            Add-ActiveJob -JobRecord $jobRecord
+            Write-JobsFile
+            Update-TelegramStatus -job $jobRecord -text "🖥️ Windows-Use en ejecución..."
+        }
+        else {
+            Send-TelegramText -chatId $chatId -text "⌛ Esa confirmación expiró o ya fue usada."
+        }
+        return
+    }
+
+    if ($callbackData -match '^cancel_windows_use:(.+)$') {
+        $confirmationId = $Matches[1]
+        $pending = Remove-PendingConfirmation -ConfirmationId $confirmationId
+        if ($null -ne $pending) {
+            Add-ChatMemory -chatId $chatId -role "user" -content "[SYSTEM]: User rejected Windows-Use desktop control. Task: $($pending.TaskDescription)"
+        }
+        Send-TelegramText -chatId $chatId -text "🛑 Windows-Use cancelado."
+        return
+    }
+
     if ($callbackData -eq "restart_cancel") {
         Send-TelegramText -chatId $chatId -text "🛑 Reinicio cancelado."
         return
     }
 
-    if ($callbackData -match '^(confirm_windows_use.*|execute_windows_task.*|retry_windows_task.*|repair_env|skip|approve.*|reject.*|cancel.*)$') {
+    if ($callbackData -match '^(repair_env|skip|approve.*|reject(?!_windows_use).*)$') {
         Send-TelegramText -chatId $chatId -text "⚠️ Botón de confirmación del modelo ignorado. Solo vale la aprobación nativa del orquestador."
         Write-DailyLog -message "Ignored model-generated callback without native handler: $callbackData" -type "WARN"
         return
@@ -377,7 +377,6 @@ function Invoke-TelegramMessageRoute {
     Write-Host "USER: $text" -ForegroundColor Yellow
 
     if ($text -eq "/new") {
-        Clear-WindowsUseApproval -ChatId "$chatId"
         Clear-ChatMemory -chatId $chatId
         Send-TelegramText -chatId $chatId -text "Conversation memory cleared."
         return
@@ -469,7 +468,6 @@ function Invoke-TelegramMessageRoute {
     }
 
     if ($text -eq "/stopcmd") {
-        Clear-WindowsUseApproval -ChatId "$chatId"
         $stopSummary = Stop-TrackedPCCommands -Reason "telegram command /stopcmd"
         $reply = "Local command stop requested.`nTracked processes stopped: $($stopSummary.ProcessesStopped)"
         Send-TelegramText -chatId $chatId -text $reply
@@ -477,7 +475,6 @@ function Invoke-TelegramMessageRoute {
     }
 
     if ($text -eq "/stopall") {
-        Clear-WindowsUseApproval -ChatId "$chatId"
         $stopSummary = Stop-AllAutomationProcesses -BotConfig $BotConfig -Reason "telegram command /stopall" -StopActiveJobs
         $reply = "Emergency stop requested.`nLocal jobs stopped: $($stopSummary.LocalJobsStopped)`nTracked local commands stopped: $($stopSummary.TrackedCommandsStopped)`nOpenCode jobs stopped: $($stopSummary.OpenCodeJobsStopped)`nOpenCode processes stopped: $($stopSummary.OpenCodeProcessesStopped)`nOther automation processes stopped: $($stopSummary.UntrackedProcessesStopped)"
         Send-TelegramText -chatId $chatId -text $reply
@@ -493,7 +490,6 @@ function Invoke-TelegramMessageRoute {
         return
     }
 
-    Clear-WindowsUseApproval -ChatId "$chatId"
     Reset-LastExecutedTags
     Add-ChatMemory -chatId $chatId -role "user" -content $text
     Add-PendingChat -ChatId $chatId
