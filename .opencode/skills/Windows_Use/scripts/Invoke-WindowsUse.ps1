@@ -12,7 +12,7 @@ param(
     [switch]$RunnerDebug
 )
 
-$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$projectRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
 . (Join-Path $projectRoot "config\Load-BotConfig.ps1")
 $botConfig = Import-BotSettings -ProjectRoot $projectRoot
 

@@ -12,7 +12,7 @@ param(
     [switch]$RunnerDebug
 )
 
-$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$projectRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
 . (Join-Path $projectRoot "config\Load-BotConfig.ps1")
 $botConfig = Import-BotSettings -ProjectRoot $projectRoot
 
@@ -49,7 +49,7 @@ $modelToUse = if ([string]::IsNullOrWhiteSpace($Model)) { $botConfig.WindowsUse.
 $reasoningEffortToUse = if ([string]::IsNullOrWhiteSpace($ReasoningEffort)) { "$($botConfig.WindowsUse.ReasoningEffort)" } else { $ReasoningEffort.Trim() }
 $browserToUse = if ([string]::IsNullOrWhiteSpace($Browser)) { $botConfig.WindowsUse.Browser } else { $Browser.Trim().ToLowerInvariant() }
 $maxStepsToUse = if ($MaxSteps -gt 0) { $MaxSteps } else { [int]$botConfig.WindowsUse.MaxSteps }
-$taskToRun = "One bounded run. IMPORTANT: When writing text, use clipboard copy-paste (Ctrl+V) instead of typing letter by letter. Copy text to clipboard first, then paste. This is faster and more accurate. Preserve exact requested text. Task: $Task"
+$taskToRun = "One bounded run. Preserve exact requested text. Prefer exact paste/input over approximate typing. Task: $Task"
 
 if ([string]::IsNullOrWhiteSpace($providerToUse)) {
     Write-Error "No Windows-Use provider configured."

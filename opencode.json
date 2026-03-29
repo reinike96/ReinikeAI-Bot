@@ -20,9 +20,48 @@
         "playwriter_*": false
     },
     "agent": {
+        "vision": {
+            "model": "google/gemini-2.0-flash",
+            "variant": "low",
+            "permission": {
+                "task": {
+                    "*": "deny"
+                }
+            }
+        },
+        "plan": {
+            "permission": {
+                "task": {
+                    "*": "deny"
+                }
+            }
+        },
+        "general": {
+            "permission": {
+                "task": {
+                    "*": "deny"
+                }
+            }
+        },
+        "explore": {
+            "permission": {
+                "task": {
+                    "*": "deny"
+                }
+            }
+        },
         "build": {
             "model": "opencode/glm-5",
             "variant": "high",
+            "permission": {
+                "task": {
+                    "build": "deny",
+                    "*": "allow"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
             "tools": {
                 "playwright_browser_*": false,
                 "file_converter_*": false,
@@ -35,12 +74,30 @@
         "browser": {
             "model": "opencode/glm-5",
             "variant": "high",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
             "tools": {
                 "playwright_browser_*": true
             }
         },
         "docs": {
             "model": "opencode/glm-5",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
             "tools": {
                 "playwright_browser_*": false,
                 "file_converter_*": false,
@@ -49,6 +106,15 @@
         },
         "sheets": {
             "model": "opencode/glm-5",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
             "tools": {
                 "playwright_browser_*": false,
                 "excel_master_*": false
@@ -56,14 +122,32 @@
         },
         "computer": {
             "model": "opencode/glm-5",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "allow",
+                    "*": "deny"
+                }
+            },
             "tools": {
-                "playwright_browser_*": false,
-                "computer_control_*": false
+                "playwright_browser_*": false
             }
         },
         "social": {
             "model": "opencode/glm-5",
             "variant": "high",
+            "task_budget": 5,
+            "permission": {
+                "task": {
+                    "*": "deny"
+                },
+                "skill": {
+                    "Windows_Use": "deny"
+                }
+            },
             "tools": {
                 "playwright_browser_*": true,
                 "playwriter_*": false

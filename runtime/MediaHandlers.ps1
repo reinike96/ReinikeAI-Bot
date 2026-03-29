@@ -77,6 +77,23 @@ function Test-DetectedFileDeliveryContext {
     return $false
 }
 
+function Get-ImageFilePrefix {
+    param([string]$FileName)
+
+    if ([string]::IsNullOrWhiteSpace($FileName)) { return "" }
+
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($FileName)
+
+    # Extract prefix: everything before the last underscore followed by a number or word like "round", "step", "final"
+    # Examples: "rpa_round1" -> "rpa", "rpa_final_result" -> "rpa", "screenshot_001" -> "screenshot"
+    if ($name -match '^(.+?)[_-](round|step|final|result|\d+)([_-]|$)') {
+        return $Matches[1].TrimEnd('_', '-')
+    }
+
+    # If no pattern matches, use the whole name as prefix
+    return $name
+}
+
 function Send-DetectedFiles {
     param(
         $chatId,
@@ -106,6 +123,8 @@ function Send-DetectedFiles {
         $candidatePaths.Add($m.Value) | Out-Null
     }
 
+    # First pass: collect all valid candidates with their metadata
+    $validCandidates = @()
     foreach ($rawPath in $candidatePaths) {
         $path = $rawPath.Trim('`', '"', "'", " ", ".")
         if (-not [System.IO.Path]::IsPathRooted($path)) {
@@ -113,64 +132,127 @@ function Send-DetectedFiles {
             $path = Join-Path $workDir $normalizedRelative
         }
 
-        if (Test-Path $path) {
+        if (-not (Test-Path $path)) { continue }
+
+        try {
+            $path = [System.IO.Path]::GetFullPath($path)
+        }
+        catch { Write-DailyLog -message "Resolve-OutputFiles: Failed to resolve path $path" -type "WARN"; continue }
+
+        $isAllowed = $false
+        foreach ($root in $allowedRoots) {
+            $normalizedRoot = $root
             try {
-                $path = [System.IO.Path]::GetFullPath($path)
+                $normalizedRoot = [System.IO.Path]::GetFullPath($root)
             }
-            catch { Write-DailyLog -message "Resolve-OutputFiles: Failed to resolve path $path" -type "WARN" }
-            if ($sentFiles -contains $path) { continue }
+            catch { <# Intentionally silent - trying multiple roots #> }
 
-            $isAllowed = $false
-            foreach ($root in $allowedRoots) {
-                $normalizedRoot = $root
-                try {
-                    $normalizedRoot = [System.IO.Path]::GetFullPath($root)
+            if (-not [string]::IsNullOrWhiteSpace($normalizedRoot) -and $path.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $isAllowed = $true
+                break
+            }
+        }
+        if (-not $isAllowed) {
+            Write-DailyLog -message "Ignored file outside allowed paths: $path" -type "JOB"
+            continue
+        }
+
+        $hasExplicitDeliveryContext = Test-DetectedFileDeliveryContext -Text $text -RawPath $rawPath -ResolvedPath $path
+        $isFreshFile = $false
+        $fileLastWriteTime = $null
+        if ($JobStartTime) {
+            try {
+                $fileInfo = Get-Item -LiteralPath $path -ErrorAction Stop
+                $fileLastWriteTime = $fileInfo.LastWriteTime
+                $freshCutoff = $JobStartTime.Value.AddSeconds(-5)
+                if ($fileInfo.LastWriteTime -ge $freshCutoff) {
+                    $isFreshFile = $true
                 }
-                catch { <# Intentionally silent - trying multiple roots #> }
+            }
+            catch { <# File may have been deleted - not critical #> }
+        }
 
-                if (-not [string]::IsNullOrWhiteSpace($normalizedRoot) -and $path.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-                    $isAllowed = $true
-                    break
-                }
-            }
-            if (-not $isAllowed) {
-                Write-DailyLog -message "Ignored file outside allowed paths: $path" -type "JOB"
-                continue
-            }
+        if (-not $hasExplicitDeliveryContext -and -not $isFreshFile) {
+            Write-DailyLog -message "Ignored referenced file without generation context: $path" -type "JOB"
+            continue
+        }
 
-            $hasExplicitDeliveryContext = Test-DetectedFileDeliveryContext -Text $text -RawPath $rawPath -ResolvedPath $path
-            $isFreshFile = $false
-            if ($JobStartTime) {
-                try {
-                    $fileInfo = Get-Item -LiteralPath $path -ErrorAction Stop
-                    $freshCutoff = $JobStartTime.Value.AddSeconds(-5)
-                    if ($fileInfo.LastWriteTime -ge $freshCutoff) {
-                        $isFreshFile = $true
-                    }
-                }
-                catch { <# File may have been deleted - not critical #> }
-            }
+        if ($path -match '\.txt$' -and $path -notmatch 'report|result|final|summary') {
+            Write-DailyLog -message "Ignored .txt file (likely internal log): $path" -type "JOB"
+            continue
+        }
 
-            if (-not $hasExplicitDeliveryContext -and -not $isFreshFile) {
-                Write-DailyLog -message "Ignored referenced file without generation context: $path" -type "JOB"
-                continue
-            }
+        $isImage = $path -match '\.(png|jpg|jpeg)$'
+        $prefix = if ($isImage) { Get-ImageFilePrefix -FileName ([System.IO.Path]::GetFileName($path)) } else { "" }
 
-            if ($path -match '\.txt$' -and $path -notmatch 'report|result|final|summary') {
-                Write-DailyLog -message "Ignored .txt file (likely internal log): $path" -type "JOB"
-                continue
-            }
-
-            Write-DailyLog -message "Detected file for delivery: $path" -type "JOB"
-            if ($path -match '\.(png|jpg|jpeg)$') {
-                Send-TelegramPhoto -chatId $chatId -filePath $path
-            }
-            else {
-                Send-TelegramDocument -chatId $chatId -filePath $path -caption "Generated file: $([System.IO.Path]::GetFileName($path))"
-            }
-            $sentFiles += $path
+        $validCandidates += [PSCustomObject]@{
+            Path = $path
+            IsImage = $isImage
+            Prefix = $prefix
+            LastWriteTime = $fileLastWriteTime
         }
     }
+
+    # Group images by prefix and select only the most recent from each group
+    $imageGroups = @{}
+    $nonImageFiles = @()
+    foreach ($candidate in $validCandidates) {
+        if ($candidate.IsImage -and -not [string]::IsNullOrWhiteSpace($candidate.Prefix)) {
+            if (-not $imageGroups.ContainsKey($candidate.Prefix)) {
+                $imageGroups[$candidate.Prefix] = @()
+            }
+            $imageGroups[$candidate.Prefix] += $candidate
+        }
+        elseif ($candidate.IsImage) {
+            # Image without a recognizable prefix pattern - send it directly
+            $nonImageFiles += $candidate
+        }
+        else {
+            $nonImageFiles += $candidate
+        }
+    }
+
+    # For each image group, select only the most recent file
+    $filesToSend = @()
+    foreach ($prefix in $imageGroups.Keys) {
+        $group = $imageGroups[$prefix]
+        if ($group.Count -eq 1) {
+            $filesToSend += $group[0]
+        }
+        else {
+            # Sort by LastWriteTime descending and take the most recent
+            $sorted = @($group | Where-Object { $null -ne $_.LastWriteTime } | Sort-Object -Property LastWriteTime -Descending)
+            if ($sorted.Count -gt 0) {
+                $mostRecent = $sorted[0]
+                # Log which files were skipped
+                foreach ($skipped in @($group | Where-Object { $_.Path -ne $mostRecent.Path })) {
+                    Write-DailyLog -message "Skipped intermediate image (same prefix '$prefix'): $($skipped.Path)" -type "JOB"
+                }
+                $filesToSend += $mostRecent
+            }
+            else {
+                # No LastWriteTime available, take the first one
+                $filesToSend += $group[0]
+            }
+        }
+    }
+    $filesToSend += $nonImageFiles
+
+    # Send the selected files
+    foreach ($fileToSend in $filesToSend) {
+        $path = $fileToSend.Path
+        if ($sentFiles -contains $path) { continue }
+
+        Write-DailyLog -message "Detected file for delivery: $path" -type "JOB"
+        if ($fileToSend.IsImage) {
+            Send-TelegramPhoto -chatId $chatId -filePath $path
+        }
+        else {
+            Send-TelegramDocument -chatId $chatId -filePath $path -caption "Generated file: $([System.IO.Path]::GetFileName($path))"
+        }
+        $sentFiles += $path
+    }
+
     return $sentFiles.Count
 }
 
